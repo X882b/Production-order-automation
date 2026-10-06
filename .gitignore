@@ -1,0 +1,16 @@
+# Secrets
+.env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+
+# Business data (production orders, backups, reference sheets)
+docs/
+Налози Ју-лабел/
+Backup files/
+stancne/
+
+# Local tool settings
+.claude/settings.local.json

@@ -1,0 +1,36 @@
+{
+  "version": "0.2.0",
+  "configurations": [
+    {
+      "name": "FastAPI (uvicorn) in container",
+      "type": "python",
+      "request": "launch",
+      "program": "/usr/local/bin/uvicorn",
+      "args": [
+        "server.app:app",
+        "--reload",
+        "--host", "0.0.0.0",
+        "--port", "8000"
+      ],
+      "cwd": "/app",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONUNBUFFERED": "1"
+      },
+      "justMyCode": true
+    },
+    {
+      "name": "Watcher (server.watcher) in container",
+      "type": "python",
+      "request": "launch",
+      "module": "server.watcher",
+      "cwd": "/app",
+      "console": "integratedTerminal",
+      "env": {
+        "PYTHONUNBUFFERED": "1",
+        "BASE_LOCAL": "/docs"
+      },
+      "justMyCode": true
+    }
+  ]
+}

@@ -1,0 +1,63 @@
+services:
+  db:
+    image: postgres:16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PG_DB}
+      POSTGRES_USER: ${PG_USER}
+      POSTGRES_PASSWORD: ${PG_PASS}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    ports:
+      - "${PG_PORT:-5432}:5432"
+
+  meili:
+    image: getmeili/meilisearch:v1.8
+    restart: unless-stopped
+    environment:
+      MEILI_ENV: production
+      MEILI_NO_ANALYTICS: "true"
+      MEILI_MASTER_KEY: ${MEILI_MASTER_KEY}
+    ports:
+      - "7700:7700"
+    command: ["meilisearch", "--http-addr", "0.0.0.0:7700"]
+
+  api:
+    build: .
+    restart: unless-stopped
+    depends_on: [db, meili]
+    environment:
+      API_KEY: ${API_KEY}
+      SERVER_HOST: 0.0.0.0
+      SERVER_PORT: 8000
+      PG_DSN: postgresql+psycopg2://${PG_USER}:${PG_PASS}@db:5432/${PG_DB}
+      MEILI_URL: http://meili:7700
+      MEILI_KEY: ${MEILI_MASTER_KEY}
+      BASE_LOCAL: /docs
+      PYTHONDONTWRITEBYTECODE: "1"
+    volumes:
+      - ./server:/app/server
+      - ${DOCS_DIR}:/docs
+    ports:
+      - "8000:8000"
+
+  watcher:
+    build: .
+    restart: unless-stopped
+    depends_on: [db, api]
+    environment:
+      API_KEY: ${API_KEY}
+      PG_DSN: postgresql+psycopg2://${PG_USER}:${PG_PASS}@db:5432/${PG_DB}
+      MEILI_URL: http://meili:7700
+      MEILI_KEY: ${MEILI_MASTER_KEY}
+      BASE_LOCAL: /docs
+      WATCH_USE_POLLING: "1"
+      PYTHONUNBUFFERED: "1"
+      PYTHONDONTWRITEBYTECODE: "1"
+    command: ["python", "-m", "server.watcher_v2_1"]
+    volumes:
+      - ./server:/app/server
+      - ${DOCS_DIR}:/docs
+
+volumes:
+  pgdata:

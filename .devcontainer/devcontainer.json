@@ -1,0 +1,22 @@
+{
+  "name": "YU-LABEL API Dev",
+  "dockerComposeFile": "../docker-compose.yml",
+  "service": "api",
+  "workspaceFolder": "/app",
+
+  "shutdownAction": "stopCompose",
+
+  "settings": {
+    "python.defaultInterpreterPath": "/usr/local/bin/python",
+    "terminal.integrated.defaultProfile.linux": "bash"
+  },
+
+  "extensions": [
+    "ms-python.python",
+    "ms-azuretools.vscode-docker"
+  ],
+
+  "postCreateCommand": "pip install debugpy",
+
+  "remoteUser": "root"
+}
