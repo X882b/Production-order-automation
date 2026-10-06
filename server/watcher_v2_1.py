@@ -872,6 +872,8 @@ class Handler(FileSystemEventHandler):
             self._settle(p)
         except FileNotFoundError:
             return
+        if not p.exists():   # moved away, e.g. by handle_new_or_manual_doc
+            return
 
         rel_path   = str(p.relative_to(BASE)).replace(os.sep, "/")
         cand_fname = detect_number_from_filename(p.stem)
