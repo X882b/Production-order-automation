@@ -524,7 +524,7 @@ class MainWindow(QMainWindow):
     def lookup_alati_live(self):
         q = self.alati_edit.text().strip()
         try:
-            rows = get_json("/lookup/tools", {"q": q, "limit": 1500})
+            rows = get_json("/lookup/tools", {"q": q, "limit": 5000})
             self._alati_rows = rows
             self.populate_alati_table(rows)
             self.alati_table.show()
@@ -583,7 +583,7 @@ class MainWindow(QMainWindow):
 
     def on_expand_alati(self):
         try:
-            rows = get_json("/lookup/tools", {"q": "", "limit": 1500})
+            rows = get_json("/lookup/tools", {"q": "", "limit": 5000})   # dialog filters locally: needs all
             dlg = AlatiDialog(self, rows)
             if dlg.exec() == QDialog.Accepted and dlg.selected_row_data:
                 self.apply_selected_alat(dlg.selected_row_data)

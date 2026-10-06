@@ -65,7 +65,7 @@ def lookup_products(q: str = Query("", max_length=100)):
 @router.get("/lookup/tools")
 def lookup_tools(
     q: str = Query("", max_length=100),
-    limit: int = Query(1500, ge=1, le=1500),
+    limit: int = Query(5000, ge=1, le=5000),   # all dies (~2000 since SPEC. OBLIK)
 ):
     with engine.connect() as cx:
         rows = cx.execute(
