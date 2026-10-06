@@ -21,6 +21,8 @@ services:
     ports:
       - "127.0.0.1:7700:7700"
     command: ["meilisearch", "--http-addr", "0.0.0.0:7700"]
+    volumes:
+      - meili_data:/meili_data
 
   api:
     build: .
@@ -61,3 +63,4 @@ services:
 
 volumes:
   pgdata:
+  meili_data:

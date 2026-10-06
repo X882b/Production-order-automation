@@ -747,7 +747,7 @@ def _index_meili(
         "content_excerpt": full_text[:2000],
     }
     try:
-        idx.add_documents([doc_ms])
+        idx.add_documents([doc_ms], primary_key="broj_naloga")
     except Exception:
         pass
 
