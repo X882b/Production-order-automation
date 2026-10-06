@@ -33,9 +33,9 @@ def api_get(path: str):
     r.raise_for_status()
     return r.json()
 
-def api_post(path: str, data=None):
+def api_post(path: str, params=None):
     url = f"http://{SERVER_HOST}:{SERVER_PORT}{path}"
-    r = requests.post(url, headers={"x-api-key": API_KEY}, data=data or {}, timeout=5)
+    r = requests.post(url, headers={"x-api-key": API_KEY}, params=params or {}, timeout=5)
     r.raise_for_status()
     return r.json()
 

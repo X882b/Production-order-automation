@@ -46,6 +46,7 @@ def post_json(path: str, payload: dict):
     return r.json()
 
 def parse_int_sr(s: str) -> int | None:
+    """'20.000' / '20 000' -> 20000. Raises ValueError on e.g. '1,5'."""
     s = (s or "").strip()
     if not s:
         return None
@@ -53,10 +54,16 @@ def parse_int_sr(s: str) -> int | None:
     return int(s)
 
 def parse_float_sr(s: str) -> float | None:
-    s = (s or "").strip()
+    """'1.234,5' -> 1234.5, '225,417' -> 225.417, and '225.417' (as shown in
+    the ALATI table) -> 225.417. Raises ValueError on garbage."""
+    s = (s or "").strip().replace(" ", "")
     if not s:
         return None
-    s = s.replace(".", "").replace(" ", "").replace(",", ".")
+    if "," in s:                 # Serbian: dots are thousands, comma is decimal
+        s = s.replace(".", "").replace(",", ".")
+    elif s.count(".") > 1:       # 1.234.567
+        s = s.replace(".", "")
+    # a single "." without "," is a decimal point
     return float(s)
 
 def fmt_int_sr(n: int | None) -> str:
@@ -131,6 +138,9 @@ class MainWindow(QMainWindow):
 
         # Tool live-search state
         self._alati_rows = []
+
+        # Field edits auto-filled by the šifra lookup -> the text it put there
+        self._autofilled = {}
 
         # ---- Top title ----
         self.title_lbl = QLabel("NALOG ZA PROIZVODNJU —")
@@ -357,7 +367,7 @@ class MainWindow(QMainWindow):
             data = requests.post(
                 url("/documents/reserve-number"),
                 headers=headers(),
-                data={"username": "gui"},
+                params={"username": "gui"},   # the endpoint reads a query parameter
                 timeout=5,
             )
             data.raise_for_status()
@@ -374,28 +384,38 @@ class MainWindow(QMainWindow):
 
     def lookup_product_by_sifra(self):
         sifra = self.sifra_edit.text().strip()
-        if not sifra:
-            self.load_series("")
-            return
-        try:
-            rows = get_json("/lookup/products", {"q": sifra})
-            best = None
-            for r in rows:
-                if r.get("sifra", "").strip().lower() == sifra.lower():
-                    best = r
-                    break
-            if best is None and rows:
-                best = rows[0]
-            if best:
-                self.naziv_edit.setText(best.get("naziv") or "")
-                self.dim_edit.setText(best.get("dimenzija") or "")
-                self.sirina_edit.setText(best.get("sirina") or "")
-                self.narucilac_edit.setText(best.get("customer_name") or "")
-                self.mat_edit.setText(best.get("material_name") or "")
-                self.selected_customer_id = best.get("customer_id")
-                self.selected_material_id = best.get("material_id")
-        except Exception as e:
-            print("lookup error:", e)
+
+        # Drop text auto-filled from a previous product, unless the user edited it
+        for edit, value in self._autofilled.items():
+            if edit.text() == value:
+                edit.clear()
+        self._autofilled = {}
+
+        # Only an exact šifra match counts – never a partial match while typing
+        best = None
+        if sifra:
+            try:
+                rows = get_json("/lookup/products", {"q": sifra})
+                best = next((r for r in rows
+                             if (r.get("sifra") or "").strip().lower() == sifra.lower()), None)
+            except Exception as e:
+                print("lookup error:", e)
+
+        # No match -> no customer/material, so a save can't use a stale one
+        self.selected_customer_id = best.get("customer_id") if best else None
+        self.selected_material_id = best.get("material_id") if best else None
+
+        if best:
+            for edit, value in (
+                (self.naziv_edit,     best.get("naziv")),
+                (self.dim_edit,       best.get("dimenzija")),
+                (self.sirina_edit,    best.get("sirina")),
+                (self.narucilac_edit, best.get("customer_name")),
+                (self.mat_edit,       best.get("material_name")),
+            ):
+                if value:   # an empty catalogue value never blanks a field
+                    edit.setText(value)
+                    self._autofilled[edit] = value
         self.load_series(sifra)
 
     # ------------------------------------------------------------------
@@ -418,9 +438,9 @@ class MainWindow(QMainWindow):
         self.mat_edit.setText(hit.get("materijal") or "")
         self.sirina_edit.setText(hit.get("sirina") or "")
         self.narucilac_edit.setText(hit.get("narucilac") or "")
-        self.selected_customer_id = None
-        self.selected_material_id = None
-        # Catalogue product (if any) supplies customer/material IDs + series
+        self._autofilled = {}   # the order's values are not from the catalogue
+        # An exactly matching catalogue product supplies customer/material IDs
+        # (and its non-empty fields); series dates are loaded either way
         self.lookup_product_by_sifra()
 
     # ------------------------------------------------------------------
@@ -428,19 +448,24 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def recompute_kolicina_display(self):
-        kom = parse_int_sr(self.kolicina_kom_input.text())
+        try:
+            kom = parse_int_sr(self.kolicina_kom_input.text())
+        except ValueError:
+            kom = None
+            self.kolicina_display.setText("Neispravan broj komada")
 
         stancna   = self.k_stancna_mm
         rows_long = self.k_rows_long
         rows_wide = self.k_rows_wide
 
-        if kom is not None:
-            self.k_kom_naruceno = kom
+        self.k_kom_naruceno = kom
 
         if not kom or not stancna or not rows_long or not rows_wide or stancna == 0:
+            # Nothing computed -> don't keep values from an earlier tool/quantity
+            self.k_kom_po_m = self.k_m_dobrih = self.k_add_m = None
             if kom is not None:
                 self.kolicina_display.setText(f"({fmt_int_sr(kom)} kom)")
-            else:
+            elif self.kolicina_kom_input.text().strip() == "":
                 self.kolicina_display.clear()
             return
 
@@ -733,14 +758,19 @@ class MainWindow(QMainWindow):
 
         try:
             res = post_json("/documents/finalize", payload)
-            if self.color_rows:
-                post_json("/documents/colors/save", {
-                    "doc_number": int(self.doc_number),
-                    "rows": self.color_rows,
-                })
+            # Always save, even an empty list, so removed rows are deleted
+            post_json("/documents/colors/save", {
+                "doc_number": int(self.doc_number),
+                "rows": self.color_rows,
+            })
 
             sifra = self.sifra_edit.text().strip()
-            if sifra:
+            # One series entry per order: saving the same order again must not
+            # record another production run
+            already_recorded = any(
+                r.get("doc_number") == int(self.doc_number) for r in self.series_dates
+            )
+            if sifra and not already_recorded:
                 from datetime import date as _date
                 if not self.series_dates:
                     series_datum = self.probni_datum_edit.date().toPython()
@@ -1360,11 +1390,37 @@ class KolicinaDialog(QDialog):
 
         self.recompute()
 
+    def _inputs(self):
+        """(kom, stancna, rows_long, rows_wide); ValueError names a bad field."""
+        values = []
+        for label, edit, parse in (
+            ("Naručeno (kom)", self.kom_edit,     parse_int_sr),
+            ("Štancna (mm)",   self.stancna_edit, parse_float_sr),
+            ("Reda (dužina)",  self.long_edit,    parse_int_sr),
+            ("Reda (širina)",  self.wide_edit,    parse_int_sr),
+        ):
+            try:
+                values.append(parse(edit.text()))
+            except ValueError:
+                raise ValueError(f"Neispravan broj u polju „{label}“: {edit.text().strip()}") from None
+        return values
+
+    def accept(self):
+        try:
+            self._inputs()
+        except ValueError as e:
+            QMessageBox.warning(self, "Količina", str(e))
+            return
+        super().accept()
+
     def recompute(self):
-        kom       = parse_int_sr(self.kom_edit.text())
-        stancna   = parse_float_sr(self.stancna_edit.text())
-        rows_long = parse_int_sr(self.long_edit.text())
-        rows_wide = parse_int_sr(self.wide_edit.text())
+        try:
+            kom, stancna, rows_long, rows_wide = self._inputs()
+        except ValueError as e:
+            for out in (self.out_kom_po_m, self.out_raw_m, self.out_add_m, self.out_m_dobrih):
+                out.setText("—")
+            self.out_line.setText(str(e))
+            return
         note      = (self.note_edit.text() or "").strip()
 
         kom_po_m = None
@@ -1394,10 +1450,7 @@ class KolicinaDialog(QDialog):
             self.out_line.setText("—")
 
     def result_payload(self):
-        kom       = parse_int_sr(self.kom_edit.text())
-        stancna   = parse_float_sr(self.stancna_edit.text())
-        rows_long = parse_int_sr(self.long_edit.text())
-        rows_wide = parse_int_sr(self.wide_edit.text())
+        kom, stancna, rows_long, rows_wide = self._inputs()   # validated in accept()
         note      = (self.note_edit.text() or "").strip()
 
         kom_po_m = None
