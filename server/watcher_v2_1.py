@@ -26,9 +26,11 @@ import time
 import hashlib
 import pathlib
 import datetime
+import traceback
 import unicodedata
 
 from watchdog.observers import Observer
+from watchdog.observers.polling import PollingObserver
 from watchdog.events import FileSystemEventHandler
 
 from sqlalchemy import create_engine, text
@@ -99,8 +101,9 @@ _STANCNA_RE = re.compile(r"\b(?:ABC|XYZ)[A-Z0-9-]*\d[A-Z0-9-]*\b", re.IGNORECASE
 # Standalone date paragraph (the signing date at the bottom of the doc)
 _STANDALONE_DATE_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}\.?\s*$")
 
-# "NALOG ZA PROIZVODNJU 6276"  (no colon – handled separately)
-_NALOG_RE = re.compile(r"^NALOG\s+ZA\s+PROIZVODNJU\s+(\d+)", re.IGNORECASE)
+# "NALOG ZA PROIZVODNJU 6276"  (no colon – handled separately).
+# Leading zeros are a template placeholder ("0001"), not a real number.
+_NALOG_RE = re.compile(r"^NALOG\s+ZA\s+PROIZVODNJU\s+([1-9]\d*)", re.IGNORECASE)
 
 # Strip whitespace runs
 def _norm(s: str) -> str:
@@ -109,9 +112,12 @@ def _norm(s: str) -> str:
 
 def _to_iso_date(text: str) -> str | None:
     m = _DATE_RE.search(text)
-    if m:
-        return f"{m.group(3)}-{int(m.group(2)):02d}-{int(m.group(1)):02d}"
-    return None
+    if not m:
+        return None
+    try:   # rejects impossible dates such as 31.09.2025
+        return datetime.date(int(m.group(3)), int(m.group(2)), int(m.group(1))).isoformat()
+    except ValueError:
+        return None
 
 
 def _parse_quantity(text: str) -> dict:
@@ -120,16 +126,22 @@ def _parse_quantity(text: str) -> dict:
         return {}
 
     def _int(s):
-        return int(re.sub(r"[.\s]", "", s.strip()))
+        return int(re.sub(r"[.,\s]", "", s))
 
     def _float(s):
-        return float(s.strip().replace(",", ".").replace(" ", ""))
+        return float(s.strip().replace(" ", "").replace(",", "."))
 
-    return {
-        "kolicina_m_dobrih":    _int(m.group("m_dobrih")),
-        "kolicina_kom_naruceno": _int(m.group("kom")),
-        "kolicina_kom_po_m":    _float(m.group("kom_po_m")),
-    }
+    result = {}
+    for key, group, conv in (
+        ("kolicina_m_dobrih",     "m_dobrih", _int),
+        ("kolicina_kom_naruceno", "kom",      _int),
+        ("kolicina_kom_po_m",     "kom_po_m", _float),
+    ):
+        try:
+            result[key] = conv(m.group(group))
+        except ValueError:
+            pass   # leave unparsed; parse_warnings flags the order for review
+    return result
 
 
 # Key-value label → internal field name
@@ -261,10 +273,10 @@ def parse_production_order(p: pathlib.Path) -> dict:
         # v2.1: OPIS/NAPOMENA must stop when a new top-level label appears.
         # Some historical orders place MATERIJAL/ŠIRINA/ALATI after OPIS.
         if section == "opis":
-            if _TOPLABEL_RE.match(text):
+            if _TOPLABEL_RE.match(text) or re.match(r"datum", tl) or re.match(r"-{5,}", text):
                 section = None
-                # fall through so the label line is parsed below
-            elif not re.match(r"datum", tl):
+                # fall through so the label/date line can be parsed below
+            else:
                 opis_parts.append(text)
                 continue
 
@@ -387,24 +399,20 @@ def sanitize_title_for_filename(title: str, fallback: str) -> str:
 # Sequence / doc-number helpers (unchanged from v1)
 # ══════════════════════════════════════════════════════════════════════════════
 
+# Never let one file push doc_number_seq further than this past the highest
+# known number (guards against e.g. a date-like "20251006" being adopted).
+MAX_NUMBER_AHEAD = 1000
+
+
 def detect_number_from_text(full_text: str) -> int | None:
-    m = re.search(r"NALOG\s+ZA\s+PROIZVODNJU\s+(\d+)", full_text, re.IGNORECASE)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            pass
-    return None
+    m = re.search(r"NALOG\s+ZA\s+PROIZVODNJU\s+([1-9]\d*)", full_text, re.IGNORECASE)
+    return int(m.group(1)) if m else None
 
 
 def detect_number_from_filename(name: str) -> int | None:
-    m = re.match(r"\s*(\d+)\s*(?:-| )?", name)
-    if m:
-        try:
-            return int(m.group(1))
-        except ValueError:
-            pass
-    return None
+    """Only the watcher's own naming: "6276 - naziv" or a bare "6276"."""
+    m = re.match(r"\s*([1-9]\d*)(?:\s+-|\s*$)", name)
+    return int(m.group(1)) if m else None
 
 
 def ensure_seq_at_least(n: int) -> None:
@@ -435,8 +443,17 @@ def adopt_manual_number(n: int, user: str = "watcher") -> int | None:
         row = cx.execute(text(
             "SELECT doc_number FROM documents WHERE doc_number = :n"
         ), {"n": n}).scalar_one_or_none()
+        highest = cx.execute(text("""
+            SELECT GREATEST(
+                (SELECT COALESCE(MAX(doc_number), 0) FROM documents),
+                (SELECT last_value FROM doc_number_seq)
+            )
+        """)).scalar_one()
     if row is not None:
         return None   # already taken
+    if n > highest + MAX_NUMBER_AHEAD:
+        print(f"[watcher] not adopting implausible number {n} (highest is {highest})")
+        return None
     ensure_seq_at_least(n)
     with engine.begin() as cx:
         cx.execute(text("""
@@ -647,7 +664,9 @@ def update_existing_doc(
     size: int,
     meta: dict,
 ) -> None:
-    """Re-index an already-numbered document that was modified."""
+    """Re-index an already-numbered document that was modified, renamed or
+    moved (rel_path follows the file), or whose first processing failed
+    half-way (a 'draft' with no file becomes 'active')."""
     rel_path  = str(p.relative_to(BASE)).replace(os.sep, "/")
     naziv     = meta.get("naziv") or ""
     full_text = meta.get("full_text", "")
@@ -657,6 +676,9 @@ def update_existing_doc(
     with engine.begin() as cx:
         cx.execute(text("""
             UPDATE documents SET
+              rel_path               = :r,
+              status                 = CASE WHEN status = 'draft' THEN 'active' ELSE status END,
+              created_at             = COALESCE(created_at, :now),
               sha256                 = :h,
               size_bytes             = :s,
               title                  = COALESCE(NULLIF(:t, ''), title),
@@ -670,7 +692,7 @@ def update_existing_doc(
               kolicina_kom_po_m      = :kom_po_m,
               kolicina_m_dobrih      = :m_dobrih,
               rok_isporuke           = :rok_isporuke
-            WHERE doc_number = :n AND rel_path = :r
+            WHERE doc_number = :n
         """), {
             "h":            digest,
             "s":            size,
@@ -756,8 +778,9 @@ def _index_meili(
 # Event handlers  (same two-path logic as v1, now using parse_production_order)
 # ══════════════════════════════════════════════════════════════════════════════
 
-def handle_new_or_manual_doc(p: pathlib.Path) -> None:
-    meta      = parse_production_order(p)
+def handle_new_or_manual_doc(p: pathlib.Path, meta: dict | None = None) -> None:
+    if meta is None:
+        meta = parse_production_order(p)
     full_text = meta.get("full_text", "")
     digest, size = sha256_of(p)
 
@@ -766,7 +789,8 @@ def handle_new_or_manual_doc(p: pathlib.Path) -> None:
         row = cx.execute(text("""
             SELECT doc_number FROM documents
              WHERE sha256 = :h AND size_bytes = :s
-        """), {"h": digest, "s": size}).scalar_one_or_none()
+             LIMIT 1
+        """), {"h": digest, "s": size}).first()
     if row is not None:
         return
 
@@ -826,22 +850,35 @@ def handle_new_or_manual_doc(p: pathlib.Path) -> None:
     finalize_new_doc(final_num, dest, digest, size, meta)
 
 
-def handle_existing_update(p: pathlib.Path, num: int) -> None:
-    rel_path = str(p.relative_to(BASE)).replace(os.sep, "/")
-
-    with engine.begin() as cx:
-        row = cx.execute(text("""
-            SELECT doc_number FROM documents
-             WHERE doc_number = :n AND rel_path = :r
-        """), {"n": num, "r": rel_path}).scalar_one_or_none()
-
+def _is_existing_order(num: int, rel_path: str) -> bool:
+    """True if the file at rel_path is (still) order `num`: it is the order's
+    recorded file, or the order has no file yet / its file is gone (renamed,
+    moved, or the first processing failed half-way)."""
+    with engine.connect() as cx:
+        row = cx.execute(text(
+            "SELECT rel_path FROM documents WHERE doc_number = :n"
+        ), {"n": num}).first()
     if row is None:
-        handle_new_or_manual_doc(p)
-        return
+        return False
+    old = row.rel_path or ""
+    return old == rel_path or not old or not (BASE / old).is_file()
 
-    meta         = parse_production_order(p)
-    digest, size = sha256_of(p)
-    update_existing_doc(num, p, digest, size, meta)
+
+def handle_doc(p: pathlib.Path) -> None:
+    rel_path   = str(p.relative_to(BASE)).replace(os.sep, "/")
+    meta       = parse_production_order(p)
+    cand_text  = meta.get("doc_number")
+    cand_fname = detect_number_from_filename(p.stem)
+
+    # A known order – even renamed or moved – keeps its number. The header
+    # number, when present, must agree (a copy edited into a new order won't).
+    for num in dict.fromkeys(n for n in (cand_fname, cand_text) if n):
+        if cand_text in (None, num) and _is_existing_order(num, rel_path):
+            digest, size = sha256_of(p)
+            update_existing_doc(num, p, digest, size, meta)
+            return
+
+    handle_new_or_manual_doc(p, meta)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -870,18 +907,13 @@ class Handler(FileSystemEventHandler):
 
         try:
             self._settle(p)
+            if p.exists():   # may already be moved away, e.g. by handle_new_or_manual_doc
+                handle_doc(p)
         except FileNotFoundError:
-            return
-        if not p.exists():   # moved away, e.g. by handle_new_or_manual_doc
-            return
-
-        rel_path   = str(p.relative_to(BASE)).replace(os.sep, "/")
-        cand_fname = detect_number_from_filename(p.stem)
-
-        if cand_fname is not None:
-            handle_existing_update(p, cand_fname)
-        else:
-            handle_new_or_manual_doc(p)
+            pass   # vanished while being processed (moved or deleted)
+        except Exception:
+            # Never let one bad file kill the observer thread
+            print(f"[watcher] ERROR processing {p}:\n{traceback.format_exc()}")
 
     def on_created(self, event):
         if not event.is_directory:
@@ -891,6 +923,88 @@ class Handler(FileSystemEventHandler):
         if not event.is_directory:
             self.process(pathlib.Path(event.src_path))
 
+    def on_moved(self, event):
+        # Renames, Word/LibreOffice save-via-rename, finished downloads (.part → .docx)
+        if not event.is_directory:
+            self.process(pathlib.Path(event.dest_path))
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# Startup catch-up
+# ══════════════════════════════════════════════════════════════════════════════
+
+def backfill() -> None:
+    """Process .docx files that are new or changed since the watcher last ran."""
+    with engine.connect() as cx:
+        known = dict(cx.execute(text(
+            "SELECT rel_path, sha256 FROM documents WHERE COALESCE(rel_path, '') <> ''"
+        )).all())
+    handler = Handler()
+    for p in sorted(BASE.rglob("*")):
+        if not p.is_file() or p.suffix.lower() not in SUPPORTED or p.name.startswith("~$"):
+            continue
+        rel_path = str(p.relative_to(BASE)).replace(os.sep, "/")
+        try:
+            if known.get(rel_path) == sha256_of(p)[0]:
+                continue
+        except FileNotFoundError:
+            continue
+        print(f"[watcher] backfill: {rel_path}")
+        handler.process(p)
+
+
+def sync_search_index() -> None:
+    """Rebuild the Meilisearch index from Postgres, the source of truth, so
+    orders saved from the GUI or while the watcher was down are searchable."""
+    with engine.connect() as cx:
+        docs = cx.execute(text("""
+            SELECT d.doc_number, d.rel_path, d.naziv, d.sifra, d.dimenzija,
+                   d.sirina, d.rok_isporuke, t.content
+              FROM documents d
+              LEFT JOIN doc_text t USING (doc_number)
+        """)).mappings().all()
+        params: dict[int, dict] = {}
+        for r in cx.execute(text("SELECT doc_number, key, value_text FROM doc_params")):
+            params.setdefault(r.doc_number, {})[r.key] = r.value_text
+
+    def s(v) -> str:
+        return "" if v is None else str(v)
+
+    batch = []
+    for d in docs:
+        p = params.get(d["doc_number"], {})
+        doc_ms = {
+            "broj_naloga":  d["doc_number"],
+            "naziv":        s(d["naziv"] or p.get("naziv")),
+            "masina":       s(p.get("masina")),
+            "sifra":        s(d["sifra"] or p.get("sifra")),
+            "dimenzija":    s(d["dimenzija"] or p.get("dimenzija")),
+            "materijal":    s(p.get("materijal")),
+            "sirina":       s(d["sirina"] or p.get("sirina")),
+            "narucilac":    s(p.get("narucilac")),
+            "alati":        s(p.get("alati")),
+            "rok_isporuke": s(d["rok_isporuke"]),
+            "rel_path":     s(d["rel_path"]),
+            "content_excerpt": s(d["content"])[:2000],
+        }
+        # Skip empty reserved numbers
+        if any(v for k, v in doc_ms.items() if k not in ("broj_naloga", "rel_path")):
+            batch.append(doc_ms)
+    if batch:
+        ms.wait_for_task(idx.add_documents(batch, primary_key="broj_naloga").task_uid)
+
+    # Drop index entries for orders that no longer exist / became empty
+    keep, stale, offset = {d["broj_naloga"] for d in batch}, [], 0
+    while True:
+        page = idx.get_documents({"fields": ["broj_naloga"], "limit": 1000, "offset": offset})
+        stale += [d.broj_naloga for d in page.results if d.broj_naloga not in keep]
+        offset += len(page.results)
+        if not page.results or offset >= page.total:
+            break
+    if stale:
+        idx.delete_documents(stale)
+    print(f"[watcher] search index synced: {len(batch)} orders, {len(stale)} stale removed")
+
 
 # ══════════════════════════════════════════════════════════════════════════════
 # Entry point
@@ -898,13 +1012,24 @@ class Handler(FileSystemEventHandler):
 
 if __name__ == "__main__":
     BASE.mkdir(parents=True, exist_ok=True)
-    print(f"[watcher] Watching {BASE} …")
-    observer = Observer()
+    for step in (backfill, sync_search_index):
+        try:
+            step()
+        except Exception:
+            print(f"[watcher] startup {step.__name__} failed:\n{traceback.format_exc()}")
+
+    polling  = os.getenv("WATCH_USE_POLLING", "") == "1"
+    observer = PollingObserver() if polling else Observer()
     observer.schedule(Handler(), str(BASE), recursive=True)
     observer.start()
+    print(f"[watcher] Watching {BASE} … ({'polling' if polling else 'inotify'})")
     try:
-        while True:
+        # If the observer thread ever dies, exit so Docker restarts the watcher
+        # instead of leaving a container that looks healthy but does nothing.
+        while observer.is_alive():
             time.sleep(1)
+        print("[watcher] observer thread stopped – exiting")
+        raise SystemExit(1)
     finally:
         observer.stop()
         observer.join()
