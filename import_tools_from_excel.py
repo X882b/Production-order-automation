@@ -1,5 +1,11 @@
+"""Import dies (štancne) from the Excel sheet into the tools table.
+
+Re-running is safe: each imported sheet's rows are replaced in one
+transaction. Use --dry-run to see what would be imported without writing.
+"""
 import os
 import re
+import sys
 import pandas as pd
 import psycopg2
 from pathlib import Path
@@ -10,28 +16,36 @@ load_dotenv(ROOT / ".env")
 
 EXCEL_PATH = ROOT / "stancne" / "Kopija Dimenzije štancni (002).xlsx"
 
-DB_DSN = (
-    f"postgresql://{os.environ['PG_USER']}:{os.environ['PG_PASS']}"
-    f"@localhost:{os.getenv('PG_PORT', '5432')}/{os.environ['PG_DB']}"
-)
-
 SHEETS = ["STANDARDNI OBLIK", "SPEC. OBLIK"]
 
-COL_MAP = {
-    "DIMENZIJE širina (mm)": "dimenzija_sirina_mm",
-    "DIMENZIJE visina (mm)": "dimenzija_visina_mm",
-    "BROJ ZUBA": "broj_zuba",
-    "OBIM CILINDRA": "obim_cilindra_mm",
-    "RASPORED Š x V": "raspored",
-    "OZNAKA ŠTANCNE": "oznaka_stancne",
-    "OZNAKA PROIZVOĐAČA": "oznaka_proizvodjaca",
+# Every sheet has the same layout: two header rows (in SPEC. OBLIK a label
+# is split across both), a blank row, then data. Columns are read by
+# position; the header word must be found there or the import aborts.
+COLUMNS = {
+    "dimenzija_sirina_mm": (1, "širina"),
+    "dimenzija_visina_mm": (2, "visina"),
+    "broj_zuba":           (3, "zuba"),
+    "obim_cilindra_mm":    (4, "cilindra"),
+    "raspored":            (5, "raspored"),
+    "oznaka_stancne":      (9, "štancne"),
+    "oznaka_proizvodjaca": (10, "proizvođača"),
 }
+HEADER_ROWS = 3
+
+
+def cell_text(val):
+    """Excel cell -> stripped text, or None when empty. 71.0 -> '71'."""
+    if val is None or pd.isna(val):
+        return None
+    if isinstance(val, float) and val.is_integer():
+        val = int(val)
+    s = str(val).strip()
+    return s or None
+
 
 def parse_num(val):
-    if pd.isna(val):
-        return None
-    s = str(val).strip()
-    if not s:
+    s = cell_text(val)
+    if s is None:
         return None
     s = s.replace(" ", "").replace(",", ".")
     try:
@@ -39,11 +53,10 @@ def parse_num(val):
     except ValueError:
         return None
 
+
 def parse_raspored(val):
-    if pd.isna(val):
-        return (None, None, None)
-    raw = str(val).strip()
-    if not raw:
+    raw = cell_text(val)
+    if raw is None:
         return (None, None, None)
 
     s = raw.lower().replace("×", "x").replace(" ", "")
@@ -55,38 +68,58 @@ def parse_raspored(val):
     rows_wide = int(m.group(2))
     return (raw, rows_long, rows_wide)
 
+
+def read_sheet(sheet: str) -> list[tuple]:
+    df = pd.read_excel(EXCEL_PATH, sheet_name=sheet, header=None, dtype=object)
+
+    for col, word in COLUMNS.values():
+        header = " ".join(cell_text(df.iat[r, col]) or "" for r in range(2)).lower() \
+            if col < df.shape[1] else ""
+        if word not in header:
+            sys.exit(f"[ERROR] Sheet '{sheet}': column {col} should contain '{word}', "
+                     f"found '{header}'. Layout changed – nothing imported.")
+
+    rows = []
+    for i in range(HEADER_ROWS, len(df)):
+        cell = {f: df.iat[i, col] for f, (col, _) in COLUMNS.items()}
+        if all(cell_text(v) is None for v in cell.values()):
+            continue   # blank or title-only row
+        raspored_raw, rows_long, rows_wide = parse_raspored(cell["raspored"])
+        rows.append((
+            sheet,
+            cell_text(cell["oznaka_stancne"]),
+            cell_text(cell["oznaka_proizvodjaca"]),
+            parse_num(cell["dimenzija_sirina_mm"]),
+            parse_num(cell["dimenzija_visina_mm"]),
+            cell_text(cell["broj_zuba"]),
+            parse_num(cell["obim_cilindra_mm"]),
+            raspored_raw,
+            rows_long,
+            rows_wide,
+        ))
+    return rows
+
+
 def main():
-    conn = psycopg2.connect(DB_DSN)
-    cur = conn.cursor()
+    dry_run = "--dry-run" in sys.argv
 
-    inserted = 0
+    # Read and validate every sheet before touching the database
+    by_sheet = {sheet: read_sheet(sheet) for sheet in SHEETS}
+    for sheet, rows in by_sheet.items():
+        print(f"{sheet}: {len(rows)} tool rows")
+    if dry_run:
+        print("Dry run – nothing written.")
+        return
 
-    for sheet in SHEETS:
-        df = pd.read_excel(EXCEL_PATH, sheet_name=sheet)
-
-        # Keep only columns we care about if present
-        available = [c for c in COL_MAP.keys() if c in df.columns]
-        if not available:
-            print(f"[WARN] Sheet '{sheet}' has none of the expected columns.")
-            continue
-
-        sub = df[available].copy()
-
-        for _, row in sub.iterrows():
-            oznaka_stancne = str(row.get("OZNAKA ŠTANCNE", "")).strip()
-            oznaka_proizvodjaca = str(row.get("OZNAKA PROIZVOĐAČA", "")).strip()
-
-            # Skip fully empty rows
-            if not any(str(row.get(c, "")).strip() for c in available):
-                continue
-
-            dim_s = parse_num(row.get("DIMENZIJE širina (mm)"))
-            dim_v = parse_num(row.get("DIMENZIJE visina (mm)"))
-            broj_zuba = str(row.get("BROJ ZUBA", "")).strip() or None
-            obim = parse_num(row.get("OBIM CILINDRA"))
-            raspored_raw, rows_long, rows_wide = parse_raspored(row.get("RASPORED Š x V"))
-
-            cur.execute(
+    db_dsn = (
+        f"postgresql://{os.environ['PG_USER']}:{os.environ['PG_PASS']}"
+        f"@localhost:{os.getenv('PG_PORT', '5432')}/{os.environ['PG_DB']}"
+    )
+    conn = psycopg2.connect(db_dsn)
+    with conn, conn.cursor() as cur:   # one transaction: all sheets or nothing
+        for sheet, rows in by_sheet.items():
+            cur.execute("DELETE FROM tools WHERE sheet_name = %s", (sheet,))
+            cur.executemany(
                 """
                 INSERT INTO tools (
                     sheet_name,
@@ -102,26 +135,13 @@ def main():
                 )
                 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
                 """,
-                (
-                    sheet,
-                    oznaka_stancne or None,
-                    oznaka_proizvodjaca or None,
-                    dim_s,
-                    dim_v,
-                    broj_zuba,
-                    obim,
-                    raspored_raw,
-                    rows_long,
-                    rows_wide,
-                ),
+                rows,
             )
-            inserted += 1
-
-    conn.commit()
-    cur.close()
     conn.close()
 
-    print(f"Inserted {inserted} tool rows.")
+    print(f"Imported {sum(len(r) for r in by_sheet.values())} tool rows "
+          f"(replacing the previous rows of these sheets).")
+
 
 if __name__ == "__main__":
     main()
