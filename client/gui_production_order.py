@@ -6,7 +6,8 @@ import math
 import requests
 from dotenv import load_dotenv
 
-from PySide6.QtCore import Qt, QTimer, QDate
+from PySide6.QtCore import Qt, QTimer, QDate, QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton,
     QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QMessageBox,
@@ -21,6 +22,7 @@ load_dotenv(ROOT / ".env")
 SERVER_HOST = os.getenv("SERVER_HOST", "127.0.0.1")
 SERVER_PORT = os.getenv("SERVER_PORT", "8000")
 API_KEY     = os.getenv("API_KEY", "")
+DOCS_DIR    = Path(os.getenv("DOCS_DIR", ROOT / "docs"))
 
 
 # ---------------------------------------------------------------------------
@@ -142,7 +144,11 @@ class MainWindow(QMainWindow):
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.on_save)
 
+        btn_search = QPushButton("Pretraži naloge...")
+        btn_search.clicked.connect(self.on_search_nalozi)
+
         top_btns = QHBoxLayout()
+        top_btns.addWidget(btn_search)
         top_btns.addStretch()
         top_btns.addWidget(btn_new)
         top_btns.addWidget(btn_save)
@@ -391,6 +397,31 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print("lookup error:", e)
         self.load_series(sifra)
+
+    # ------------------------------------------------------------------
+    # Search past orders (Meilisearch via /documents/search)
+    # ------------------------------------------------------------------
+
+    def on_search_nalozi(self):
+        dlg = NaloziDialog(self)
+        if dlg.exec() == QDialog.Accepted and dlg.selected_row_data:
+            self.apply_nalog(dlg.selected_row_data)
+
+    def apply_nalog(self, hit):
+        """Prefill the form from a past order, for a repeat job."""
+        idx = self.machine_cb.findText(hit.get("masina") or "", Qt.MatchFixedString)
+        if idx >= 0:
+            self.machine_cb.setCurrentIndex(idx)
+        self.sifra_edit.setText(hit.get("sifra") or "")
+        self.naziv_edit.setText(hit.get("naziv") or "")
+        self.dim_edit.setText(hit.get("dimenzija") or "")
+        self.mat_edit.setText(hit.get("materijal") or "")
+        self.sirina_edit.setText(hit.get("sirina") or "")
+        self.narucilac_edit.setText(hit.get("narucilac") or "")
+        self.selected_customer_id = None
+        self.selected_material_id = None
+        # Catalogue product (if any) supplies customer/material IDs + series
+        self.lookup_product_by_sifra()
 
     # ------------------------------------------------------------------
     # KOLIČINA
@@ -833,6 +864,136 @@ class AlatiDialog(QDialog):
         if original_index is None or int(original_index) >= len(self.rows):
             return
         self.selected_row_data = self.rows[int(original_index)]
+        self.accept()
+
+
+# ---------------------------------------------------------------------------
+# NaloziDialog – search past production orders
+# ---------------------------------------------------------------------------
+
+class NaloziDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Pretraga naloga")
+        self.resize(1100, 600)
+
+        self.rows = []
+        self.selected_row_data = None
+
+        self.search_edit = QLineEdit()
+        self.search_edit.setPlaceholderText("Pretraži naloge (broj, naziv, šifra, naručilac...)")
+        self.search_edit.textEdited.connect(lambda _: self.search_timer.start())
+
+        self.search_timer = QTimer(self)
+        self.search_timer.setInterval(250)
+        self.search_timer.setSingleShot(True)
+        self.search_timer.timeout.connect(self.run_search)
+
+        btn_close = QPushButton("Close")
+        btn_close.clicked.connect(self.reject)
+
+        top_row = QHBoxLayout()
+        top_row.addWidget(self.search_edit, 1)
+        top_row.addWidget(btn_close)
+
+        self.table = QTableWidget(0, 6)
+        self.table.setHorizontalHeaderLabels([
+            "Broj", "Naziv", "Šifra", "Naručilac", "Dimenzija", "Rok",
+        ])
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.cellDoubleClicked.connect(lambda row, _col: self.on_fill_form())
+
+        self.status_lbl = QLabel("")
+
+        btn_open = QPushButton("Otvori dokument")
+        btn_open.clicked.connect(self.on_open_document)
+        btn_fill = QPushButton("Popuni formu")
+        btn_fill.clicked.connect(self.on_fill_form)
+
+        bottom_row = QHBoxLayout()
+        bottom_row.addWidget(self.status_lbl, 1)
+        bottom_row.addWidget(btn_open)
+        bottom_row.addWidget(btn_fill)
+
+        layout = QVBoxLayout()
+        layout.addLayout(top_row)
+        layout.addWidget(self.table)
+        layout.addLayout(bottom_row)
+        self.setLayout(layout)
+
+        self.run_search()
+
+    def run_search(self):
+        try:
+            self.rows = get_json("/documents/search", {"q": self.search_edit.text().strip()})
+            self.status_lbl.setText(f"{len(self.rows)} naloga")
+        except Exception as e:
+            self.rows = []
+            self.status_lbl.setText(f"Greška pretrage: {e}")
+        self.populate()
+
+    def populate(self):
+        from datetime import date as _date
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(self.rows))
+
+        for i, row in enumerate(self.rows):
+            rok = row.get("rok_isporuke") or ""
+            try:
+                rok = _date.fromisoformat(rok).strftime("%d.%m.%Y")
+            except ValueError:
+                pass
+            values = [
+                row.get("broj_naloga"),
+                row.get("naziv") or "",
+                row.get("sifra") or "",
+                row.get("narucilac") or "",
+                row.get("dimenzija") or "",
+                rok,
+            ]
+            for col, value in enumerate(values):
+                item = QTableWidgetItem()
+                if col == 0:
+                    item.setData(Qt.DisplayRole, value)   # numeric sort
+                else:
+                    item.setText(str(value))
+                item.setData(Qt.UserRole, i)
+                self.table.setItem(i, col, item)
+
+        self.table.setSortingEnabled(True)
+
+    def _selected(self):
+        # Must use UserRole data – visual row != original index after sorting
+        item = self.table.item(self.table.currentRow(), 0)
+        if not item:
+            return None
+        original_index = item.data(Qt.UserRole)
+        if original_index is None or int(original_index) >= len(self.rows):
+            return None
+        return self.rows[int(original_index)]
+
+    def on_open_document(self):
+        row = self._selected()
+        if not row:
+            return
+        path = DOCS_DIR / (row.get("rel_path") or "")
+        if not row.get("rel_path") or not path.is_file():
+            QMessageBox.warning(self, "Dokument", f"Fajl nije pronađen:\n{path}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
+
+    def on_fill_form(self):
+        row = self._selected()
+        if not row:
+            return
+        self.selected_row_data = row
         self.accept()
 
 

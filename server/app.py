@@ -11,6 +11,7 @@ from server.routes_lookup import router as lookup_router
 from server.routes_documents_finalize import router as finalize_router
 from server.routes_doc_colors import router as doc_colors_router
 from server.routes_series import router as series_router
+from server.routes_search import router as search_router
 
 API_KEY = os.getenv("API_KEY")
 
@@ -27,6 +28,7 @@ app.include_router(lookup_router, dependencies=[Depends(require_api_key)])
 app.include_router(finalize_router, dependencies=[Depends(require_api_key)])
 app.include_router(doc_colors_router, dependencies=[Depends(require_api_key)])
 app.include_router(series_router, dependencies=[Depends(require_api_key)])
+app.include_router(search_router, dependencies=[Depends(require_api_key)])
 
 @app.get("/ping", dependencies=[Depends(require_api_key)])
 def ping():
