@@ -28,6 +28,7 @@ services:
     build: .
     restart: unless-stopped
     depends_on: [db, meili]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       API_KEY: ${API_KEY}
       SERVER_HOST: 0.0.0.0
@@ -47,6 +48,7 @@ services:
     build: .
     restart: unless-stopped
     depends_on: [db, api]
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
     environment:
       API_KEY: ${API_KEY}
       PG_DSN: postgresql+psycopg2://${PG_USER}:${PG_PASS}@db:5432/${PG_DB}
