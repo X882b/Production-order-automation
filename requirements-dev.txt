@@ -1,0 +1,3 @@
+# Running the tests: pip install -r requirements-dev.txt && pytest
+-r server/requirements.txt
+pytest==9.1.1

@@ -1,0 +1,12 @@
+# API and watcher. Installed into the Docker image (see Dockerfile).
+# After changing a version here, rebuild with: docker compose build
+fastapi==0.142.4
+uvicorn[standard]==0.54.0
+pydantic==2.13.5
+SQLAlchemy==2.0.54
+psycopg2-binary==2.9.13
+python-dotenv==1.2.4
+requests==2.34.2
+meilisearch==0.43.0
+watchdog==6.0.0
+python-docx==1.2.0

@@ -5,11 +5,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
   && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY server /app/server
 
-RUN pip install --no-cache-dir \
-    fastapi uvicorn[standard] python-dotenv SQLAlchemy psycopg2-binary \
-    requests pydantic meilisearch watchdog python-docx
+# Dependencies first, so code changes don't trigger a reinstall
+COPY server/requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY server /app/server
 
 ENV SERVER_HOST=0.0.0.0 SERVER_PORT=8000
 EXPOSE 8000
