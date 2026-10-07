@@ -20,10 +20,10 @@
       "justMyCode": true
     },
     {
-      "name": "Watcher (server.watcher) in container",
+      "name": "Watcher (server.watcher_v2_1) in container",
       "type": "python",
       "request": "launch",
-      "module": "server.watcher",
+      "module": "server.watcher_v2_1",
       "cwd": "/app",
       "console": "integratedTerminal",
       "env": {
