@@ -21,6 +21,3 @@ logs:
 gui:
 	@echo "Starting GUI..."
 	cd "$(CURDIR)" && . .venv/bin/activate && python3 client/gui_main.py
-
-# cd "/path/to/project"
-
