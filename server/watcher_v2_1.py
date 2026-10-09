@@ -94,15 +94,16 @@ _QUANTITY_RE = re.compile(
 
 # Lines without all three figures are read figure by figure: the GUI writes
 # "(20.000 kom)" when no die is chosen, and some orders have no per-metre
-# figure ("1650 m dobrih (20.000 kom)")
-_M_DOBRIH_RE = re.compile(r"(?<![\d.,])(?P<n>\d[\d.]*(?:\s\d{3})*)\s*m\s*dobrih\b", re.IGNORECASE)
-_KOM_RE = re.compile(
-    r"(?<![\d.,])(?P<n>\d[\d.,]*(?:\s\d{3})*)\s*(?:kom|pari|kompleta?)\b\.?(?!\s*/)",
-    re.IGNORECASE,
-)
-_KOM_PO_M_RE = re.compile(r"(?<![\d.,])(?P<n>\d[\d.,]*)\s*(?:kom|pari|kompleta?)\s*/\s*m\b", re.IGNORECASE)
+# figure ("1650 m dobrih (20.000 kom)"). A number is space-grouped ("20 000,00")
+# or digits with dots and commas, and never starts inside another number or
+# right after a date ("do 15.08. 500 kom")
+_NUM = r"(?<![\d.,])(?<!\d\s)(?P<n>\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?![\d.,])|\d[\d.,]*)"
+_M_DOBRIH_RE = re.compile(_NUM + r"\s*m(?:et(?:ara|ra)?)?\b\.?(?!\s*/)", re.IGNORECASE)
+_KOM_RE      = re.compile(_NUM + r"\s*(?:kom|pari|kompleta?)\b\.?(?!\s*/)", re.IGNORECASE)
+_KOM_PO_M_RE = re.compile(_NUM + r"\s*(?:kom|pari|kompleta?)\s*/\s*m\b", re.IGNORECASE)
 
-_QTY_KEYS = ("kolicina_m_dobrih", "kolicina_kom_naruceno", "kolicina_kom_po_m")
+# "2 x 10.000 kom", "20 rolni po 1.000 kom": a count per roll or per variant
+_MULTIPLIER_RE = re.compile(r"(?:(?<![a-zčćžšđ])x|[×*]|\bpo)\s*$", re.IGNORECASE)
 
 # Date:  "24.07.2025." or "24.07.2025"
 _DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\b")
@@ -149,9 +150,13 @@ def _parse_quantity(text: str) -> dict:
     else:
         raw = {}
         for group, rx in (("m_dobrih", _M_DOBRIH_RE), ("kom", _KOM_RE), ("kom_po_m", _KOM_PO_M_RE)):
-            part = rx.search(text)
-            if part:
-                raw[group] = part.group("n")
+            # Only a figure that can't be confused: the one of its kind in the
+            # line, and for pieces not a count per roll or per variant
+            found = list(rx.finditer(text))
+            if len(found) == 1 and not (
+                group == "kom" and _MULTIPLIER_RE.search(text[:found[0].start()])
+            ):
+                raw[group] = found[0].group("n")
 
     def _int(s):
         # "20.000", "20 000", "20,000" and "20.000,00" are all 20000; a real
@@ -162,7 +167,10 @@ def _parse_quantity(text: str) -> dict:
             if int(decimals.group(2)):
                 raise ValueError(s)
             s = decimals.group(1)
-        return int(re.sub(r"[.,]", "", s))
+        n = int(re.sub(r"[.,]", "", s))
+        if n > 2_147_483_647:   # not a real figure, and too big for the column
+            raise ValueError(s)
+        return n
 
     def _float(s):
         # Same rules as parse_float_sr in client/formatting.py, which formats
@@ -585,7 +593,8 @@ def parse_warnings(meta: dict) -> list[str]:
         # The piece count is always expected; the other two only if written
         unread = [
             name for name, key, written in (
-                ("m dobrih", "kolicina_m_dobrih",     re.search(r"m\s*dobrih", kolicina, re.IGNORECASE)),
+                ("m dobrih", "kolicina_m_dobrih",     re.search(
+                    r"\d\s*m(?:et(?:ara|ra)?)?\b\.?(?!\s*/)|m\s*dobrih", kolicina, re.IGNORECASE)),
                 ("kom",      "kolicina_kom_naruceno", True),
                 ("kom/m",    "kolicina_kom_po_m",     re.search(r"/\s*m\b", kolicina, re.IGNORECASE)),
             )
@@ -648,10 +657,10 @@ def finalize_new_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              -- figures already stored (e.g. by the GUI) stay when none could be read
-              kolicina_kom_naruceno  = CASE WHEN :keep_qty THEN kolicina_kom_naruceno ELSE :kom_naruceno END,
-              kolicina_kom_po_m      = CASE WHEN :keep_qty THEN kolicina_kom_po_m ELSE :kom_po_m END,
-              kolicina_m_dobrih      = CASE WHEN :keep_qty THEN kolicina_m_dobrih ELSE :m_dobrih END,
+              -- a figure the file doesn't give keeps its stored value (e.g. from the GUI)
+              kolicina_kom_naruceno  = COALESCE(:kom_naruceno, kolicina_kom_naruceno),
+              kolicina_kom_po_m      = COALESCE(:kom_po_m, kolicina_kom_po_m),
+              kolicina_m_dobrih      = COALESCE(:m_dobrih, kolicina_m_dobrih),
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
@@ -669,7 +678,6 @@ def finalize_new_doc(
             "kom_naruceno": meta.get("kolicina_kom_naruceno"),
             "kom_po_m":     meta.get("kolicina_kom_po_m"),
             "m_dobrih":     meta.get("kolicina_m_dobrih"),
-            "keep_qty":     all(meta.get(k) is None for k in _QTY_KEYS),
             "rok_isporuke": meta.get("rok_isporuke"),
         })
 
@@ -748,10 +756,10 @@ def update_existing_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              -- figures already stored (e.g. by the GUI) stay when none could be read
-              kolicina_kom_naruceno  = CASE WHEN :keep_qty THEN kolicina_kom_naruceno ELSE :kom_naruceno END,
-              kolicina_kom_po_m      = CASE WHEN :keep_qty THEN kolicina_kom_po_m ELSE :kom_po_m END,
-              kolicina_m_dobrih      = CASE WHEN :keep_qty THEN kolicina_m_dobrih ELSE :m_dobrih END,
+              -- a figure the file doesn't give keeps its stored value (e.g. from the GUI)
+              kolicina_kom_naruceno  = COALESCE(:kom_naruceno, kolicina_kom_naruceno),
+              kolicina_kom_po_m      = COALESCE(:kom_po_m, kolicina_kom_po_m),
+              kolicina_m_dobrih      = COALESCE(:m_dobrih, kolicina_m_dobrih),
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
@@ -769,7 +777,6 @@ def update_existing_doc(
             "kom_naruceno": meta.get("kolicina_kom_naruceno"),
             "kom_po_m":     meta.get("kolicina_kom_po_m"),
             "m_dobrih":     meta.get("kolicina_m_dobrih"),
-            "keep_qty":     all(meta.get(k) is None for k in _QTY_KEYS),
             "rok_isporuke": meta.get("rok_isporuke"),
         })
 

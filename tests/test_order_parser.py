@@ -182,6 +182,9 @@ def test_warns_when_die_code_is_not_recognised():
     ("KOLIČINA: (1,5 kom)",                              "KOLIČINA found but not extracted: kom"),
     ("KOLIČINA: 1650 m dobrih (20.000 kom) (12,2,3 kom/m)", "KOLIČINA found but not extracted: kom/m"),
     ("KOLIČINA: 1645,5 m dobrih (20.000 kom)",           "KOLIČINA found but not extracted: m dobrih"),
+    ("KOLIČINA: 2 role po 10.000 kom",                   "KOLIČINA found but not extracted: kom"),
+    ("KOLIČINA: 1650 m dobrih (2 x 10.000 kom) (12,23 kom/m)", "KOLIČINA found but not extracted: kom"),
+    ("KOLIČINA: 1650 m, dodati 50 m (20.000 kom)",       "KOLIČINA found but not extracted: m dobrih"),
 ])
 def test_warns_about_quantity_figures_that_are_not_extracted(make_docx, line, warning):
     meta = watcher.parse_production_order(make_docx(["ŠIFRA: DEMO-1", line]))
@@ -194,6 +197,8 @@ def test_warns_about_quantity_figures_that_are_not_extracted(make_docx, line, wa
     "KOLIČINA: 20 m dobrih (25.000 kom) (1.234,50 kom/m)",
     "KOLIČINA: (20.000 kom)",               # the GUI's line when no die is chosen
     "KOLIČINA: 1650 m dobrih (20.000 kom)",  # no per-metre figure written
+    "KOLIČINA: 1650 m (20.000 kom)",
+    "KOLIČINA: (20.000 kom) - isporuka do 15.10.",
 ])
 def test_no_quantity_warning_when_written_figures_are_extracted(make_docx, line):
     meta = watcher.parse_production_order(make_docx([line]))
@@ -243,8 +248,28 @@ def test_parse_quantity(text, expected):
     ("(5.000 pari)", {"kolicina_kom_naruceno": 5000}),
     ("1650 m dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
     ("(12,23 kom/m)", {"kolicina_kom_po_m": 12.23}),
+    ("(20 000,00 kom)", {"kolicina_kom_naruceno": 20000}),
+    ("(1 500,00 kom)", {"kolicina_kom_naruceno": 1500}),
+    ("1 000 000,00 kom", {"kolicina_kom_naruceno": 1000000}),
+    ("(20.000 kom) (1 234,50 kom/m)", {"kolicina_kom_naruceno": 20000, "kolicina_kom_po_m": 1234.5}),
+    ("do 15.08. 500 kom", {"kolicina_kom_naruceno": 500}),      # a date isn't part of the figure
+    ("24.07.2025. 500 kom", {"kolicina_kom_naruceno": 500}),
+    ("rok 24.07. 650 m dobrih (8.000 kom)", {"kolicina_m_dobrih": 650, "kolicina_kom_naruceno": 8000}),
+    ("1650 m (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
+    ("1650 metara dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
+    ("1650 m. dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
     ("(1,5 kom)", {}),                       # not a piece count
     ("po dogovoru", {}),
+    # A count per roll or per variant, or several counts: left for review
+    ("2 role po 10.000 kom", {}),
+    ("(2 x 10.000 kom)", {}),
+    ("2x10.000 kom", {}),
+    ("20 rolni po 1.000 kom = 20.000 kom", {}),
+    ("1.000 kom na roli, ukupno 20.000 kom", {}),
+    ("1650 m dobrih (2 x 10.000 kom) (12,23 kom/m)", {"kolicina_m_dobrih": 1650, "kolicina_kom_po_m": 12.23}),
+    # More than the column holds: a date glued to the metres (full-line pattern)
+    ("isporuka 24.07.2025. 650 m dobrih (8.000 kom) (12,23 kom/m)",
+     {"kolicina_kom_naruceno": 8000, "kolicina_kom_po_m": 12.23}),
 ])
 def test_quantity_line_with_some_figures(text, expected):
     assert watcher._parse_quantity(text) == expected
