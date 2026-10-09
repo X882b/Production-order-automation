@@ -41,9 +41,10 @@ class FinalizeDoc(BaseModel):
     napred_naziv: Optional[str] = None
     alati: Optional[str] = None
     opis: Optional[str] = None
+    napomena: Optional[str] = None
 
 
-_TEXT_PARAMS = {"napred_slovo", "napred_naziv", "alati", "opis"}
+_TEXT_PARAMS = {"napred_slovo", "napred_naziv", "alati", "opis", "napomena"}
 
 
 @router.post("/documents/finalize")

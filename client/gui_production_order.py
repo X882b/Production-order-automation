@@ -20,7 +20,10 @@ from formatting import (
     parse_int_sr, parse_float_sr, fmt_int_sr, fmt_float_sr,
     fmt_cylinder_from_zuba, _fmt_cylinder,
 )
-from order_text import OPIS_DEFAULT, napred_ide_text, alati_text
+from order_text import (
+    OPIS_DEFAULT, NAPOMENA_DEFAULT, napred_ide_text, alati_text,
+    odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -87,6 +90,8 @@ class MainWindow(QMainWindow):
         # The ALATI line as last filled in automatically (from the chosen die
         # or a past order); a line typed by hand is not replaced
         self._alati_auto = ""
+        # The roll groups as last proposed; groups changed by hand are kept
+        self._rolne_auto = []
 
         # ---- Top title ----
         self.title_lbl = QLabel("NALOG ZA PROIZVODNJU —")
@@ -259,11 +264,11 @@ class MainWindow(QMainWindow):
 
         # ---- NAPRED IDE: which letter of the name is printed first ----
         self.napred_slovo_edit = QLineEdit()
-        self.napred_slovo_edit.setPlaceholderText("W")
+        self.napred_slovo_edit.setPlaceholderText("D")
         self.napred_slovo_edit.setMaxLength(5)
         self.napred_slovo_edit.setFixedWidth(60)
         self.napred_naziv_edit = QLineEdit()
-        self.napred_naziv_edit.setPlaceholderText("EHW")
+        self.napred_naziv_edit.setPlaceholderText("Demo")
         self.napred_slovo_edit.textChanged.connect(self.refresh_napred_display)
         self.napred_naziv_edit.textChanged.connect(self.refresh_napred_display)
 
@@ -295,6 +300,74 @@ class MainWindow(QMainWindow):
         self.opis_edit.setPlainText(OPIS_DEFAULT)
         self.opis_edit.setFixedHeight(self.opis_edit.fontMetrics().lineSpacing() * 4 + 12)
 
+        # ---- NAPOMENA: slitting into rolls, unwinding, the rest ----
+        self.caure_edit = QLineEdit()
+        self.caure_edit.setPlaceholderText("Ø45/Ø52/65 mm")
+        self.max_d_edit = QLineEdit()
+        self.max_d_edit.setPlaceholderText("150")
+        self.max_d_edit.setFixedWidth(60)
+        self.kom_po_rolni_edit = QLineEdit()
+        self.kom_po_rolni_edit.setPlaceholderText("1.000")
+        self.kom_po_rolni_edit.setFixedWidth(100)
+        self.caure_edit.textChanged.connect(self.refresh_napomena_display)
+        self.max_d_edit.textChanged.connect(self.refresh_napomena_display)
+        self.kom_po_rolni_edit.textChanged.connect(self.refresh_napomena)
+
+        self.rolne_table = QTableWidget(0, 3)
+        self.rolne_table.setHorizontalHeaderLabels(["Rolni", "kom/rolna", "otkucaja/rolna"])
+        self.rolne_table.verticalHeader().setVisible(False)
+        self.rolne_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.rolne_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.rolne_table.setFixedHeight(   # room for three groups
+            self.rolne_table.horizontalHeader().sizeHint().height()
+            + self.rolne_table.verticalHeader().defaultSectionSize() * 3
+            + self.rolne_table.frameWidth() * 2
+        )
+        self.rolne_table.itemChanged.connect(self.refresh_napomena_display)
+
+        btn_add_group = QPushButton("+ grupa")
+        btn_remove_group = QPushButton("− grupa")
+        btn_add_group.clicked.connect(self.on_add_roll_group)
+        btn_remove_group.clicked.connect(self.on_remove_roll_group)
+
+        self.napomena_display = QPlainTextEdit()
+        self.napomena_display.setReadOnly(True)
+        self.napomena_display.setPlaceholderText("(unesite kom/rolna...)")
+        self.napomena_display.setFixedHeight(self.napomena_display.fontMetrics().lineSpacing() * 4 + 12)
+
+        self.napomena_ostalo_edit = QPlainTextEdit()
+        self.napomena_ostalo_edit.setPlainText(NAPOMENA_DEFAULT)
+        self.napomena_ostalo_edit.setFixedHeight(
+            self.napomena_ostalo_edit.fontMetrics().lineSpacing() * 3 + 12
+        )
+
+        caure_row = QHBoxLayout()
+        caure_row.addWidget(QLabel("čaure"))
+        caure_row.addWidget(self.caure_edit, 1)
+        caure_row.addWidget(QLabel("max. Ø"))
+        caure_row.addWidget(self.max_d_edit)
+        caure_row.addWidget(QLabel("mm"))
+
+        rolne_row = QHBoxLayout()
+        rolne_row.addWidget(QLabel("kom/rolna"))
+        rolne_row.addWidget(self.kom_po_rolni_edit)
+        rolne_row.addStretch()
+        rolne_row.addWidget(btn_add_group)
+        rolne_row.addWidget(btn_remove_group)
+
+        napomena_layout = QVBoxLayout()
+        napomena_layout.setContentsMargins(0, 0, 0, 0)
+        napomena_layout.setSpacing(4)
+        napomena_layout.addLayout(caure_row)
+        napomena_layout.addLayout(rolne_row)
+        napomena_layout.addWidget(self.rolne_table)
+        napomena_layout.addWidget(self.napomena_display)
+        napomena_layout.addWidget(self.napomena_ostalo_edit)
+        napomena_layout.addStretch()   # spare height goes below, not between the rows
+
+        napomena_widget = QWidget()
+        napomena_widget.setLayout(napomena_layout)
+
         # ---- Form ----
         form = QFormLayout()
         form.addRow("MAŠINA:", self.machine_cb)
@@ -312,6 +385,7 @@ class MainWindow(QMainWindow):
         form.addRow("NAPRED IDE:", napred_widget)
         form.addRow("ALATI (u nalogu):", self.alati_nalog_edit)
         form.addRow("OPIS:", self.opis_edit)
+        form.addRow("NAPOMENA:", napomena_widget)
 
         center = QWidget()
         center.setLayout(form)
@@ -464,6 +538,7 @@ class MainWindow(QMainWindow):
                 self.kolicina_display.setText(f"({fmt_int_sr(kom)} kom)")
             elif self.kolicina_kom_input.text().strip() == "":
                 self.kolicina_display.clear()
+            self.refresh_napomena()
             return
 
         kom_po_m = (1000.0 / stancna) * rows_long * rows_wide
@@ -477,6 +552,7 @@ class MainWindow(QMainWindow):
 
         line = f"{m_dobrih} m dobrih ({fmt_int_sr(kom)} kom) ({fmt_float_sr(kom_po_m, 2)} kom/m)"
         self.kolicina_display.setText(line)
+        self.refresh_napomena()
 
     def on_kolicina_kom_changed(self):
         self.recompute_kolicina_display()
@@ -704,6 +780,97 @@ class MainWindow(QMainWindow):
         self.napred_display.setText(napred_ide_text(
             self.napred_slovo_edit.text(), self.napred_naziv_edit.text()
         ))
+        self.refresh_napomena_display()   # its unwinding line uses them too
+
+    # ------------------------------------------------------------------
+    # NAPOMENA
+    # ------------------------------------------------------------------
+
+    def _roll_groups(self):
+        """The (rolls, kom/rolna) groups in the table; incomplete rows are skipped."""
+        groups = []
+        for r in range(self.rolne_table.rowCount()):
+            cells = [self.rolne_table.item(r, c) for c in (0, 1)]
+            try:
+                rolls, kom = (parse_int_sr(cell.text() if cell else "") for cell in cells)
+            except ValueError:
+                continue
+            if rolls and kom:
+                groups.append((rolls, kom))
+        return groups
+
+    def _set_roll_groups(self, groups):
+        self.rolne_table.blockSignals(True)
+        self.rolne_table.setRowCount(0)
+        for rolls, kom in groups:
+            self._append_roll_row(str(rolls), fmt_int_sr(kom))
+        self.rolne_table.blockSignals(False)
+
+    def _append_roll_row(self, rolls="", kom=""):
+        r = self.rolne_table.rowCount()
+        self.rolne_table.insertRow(r)
+        self.rolne_table.setItem(r, 0, QTableWidgetItem(rolls))
+        self.rolne_table.setItem(r, 1, QTableWidgetItem(kom))
+        computed = QTableWidgetItem("")
+        computed.setFlags(computed.flags() & ~Qt.ItemIsEditable)
+        self.rolne_table.setItem(r, 2, computed)
+
+    def on_add_roll_group(self):
+        self.rolne_table.blockSignals(True)
+        self._append_roll_row()
+        self.rolne_table.blockSignals(False)
+
+    def on_remove_roll_group(self):
+        rows = sorted({i.row() for i in self.rolne_table.selectedIndexes()}, reverse=True)
+        if not rows and self.rolne_table.rowCount():
+            rows = [self.rolne_table.rowCount() - 1]
+        for r in rows:
+            self.rolne_table.removeRow(r)
+        self.refresh_napomena_display()
+
+    def refresh_napomena(self):
+        """Propose the roll groups from the quantity, kom/rolna and the die's
+        lanes (unless changed by hand), then refresh the lines."""
+        try:
+            kom_po_rolni = parse_int_sr(self.kom_po_rolni_edit.text())
+        except ValueError:
+            kom_po_rolni = None
+        if self._roll_groups() in ([], self._rolne_auto):
+            self._rolne_auto = split_rolls(self.k_kom_naruceno, kom_po_rolni, self.k_rows_wide)
+            self._set_roll_groups(self._rolne_auto)
+        self.refresh_napomena_display()
+
+    def refresh_napomena_display(self):
+        # otkucaja/rolna for each group, from the chosen die
+        self.rolne_table.blockSignals(True)
+        for r in range(self.rolne_table.rowCount()):
+            cell = self.rolne_table.item(r, 1)
+            try:
+                kom = parse_int_sr(cell.text() if cell else "")
+            except ValueError:
+                kom = None
+            otk = otkucaji(kom, self.k_stancna_mm, self.k_rows_long)
+            self.rolne_table.item(r, 2).setText("" if otk is None else str(otk))
+        self.rolne_table.blockSignals(False)
+
+        self.napomena_display.setPlainText(napomena_text(
+            self._rasecanje_line(),
+            odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text()),
+        ))
+
+    def _rasecanje_line(self):
+        return rasecanje_text(
+            self.caure_edit.text(), self._roll_groups(),
+            self.k_stancna_mm, self.k_rows_long, self.max_d_edit.text(),
+        )
+
+    def napomena_full_text(self):
+        """NAPOMENA as the order has it: slitting, unwinding, then the rest."""
+        return napomena_text(
+            self._rasecanje_line(),
+            odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text()),
+            self.napomena_ostalo_edit.toPlainText(),
+        )
 
     def on_add_series_date(self):
         sifra = self.sifra_edit.text().strip()
@@ -765,6 +932,7 @@ class MainWindow(QMainWindow):
             "napred_naziv":          self.napred_naziv_edit.text().strip() or None,
             "alati":                 self.alati_nalog_edit.text().strip() or None,
             "opis":                  self.opis_edit.toPlainText().strip() or None,
+            "napomena":              self.napomena_full_text() or None,
         }
 
         try:
