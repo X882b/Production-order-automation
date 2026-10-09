@@ -26,8 +26,10 @@ the product and die catalogues.
   number, autofills from the product catalogue by product code, searches
   the die catalogue, calculates metres of material from the ordered
   quantity and die layout, edits colour/plate stations, tracks
-  production-run dates per product, and searches past orders to open the
-  Word file or reuse it for a repeat job.
+  production-run dates per product, builds the order's text lines word for
+  word (which letter of the name is printed first, the ALATI line, OPIS),
+  and searches past orders to open the Word file or reuse it for a repeat
+  job.
 
 ![Searching past orders](screenshots/order-search.png)
 

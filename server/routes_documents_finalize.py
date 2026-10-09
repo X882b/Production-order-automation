@@ -35,6 +35,16 @@ class FinalizeDoc(BaseModel):
     kolicina_note: Optional[str] = None
     rok_isporuke: Optional[date] = None
 
+    # Text lines of the order, kept in doc_params under the same keys the
+    # watcher uses for what it reads from the Word file
+    napred_slovo: Optional[str] = None
+    napred_naziv: Optional[str] = None
+    alati: Optional[str] = None
+    opis: Optional[str] = None
+
+
+_TEXT_PARAMS = {"napred_slovo", "napred_naziv", "alati", "opis"}
+
 
 @router.post("/documents/finalize")
 def finalize_document(payload: FinalizeDoc):
@@ -87,5 +97,20 @@ def finalize_document(payload: FinalizeDoc):
                 """),
                 params,
             ).mappings().fetchone()
+
+        # A line that's given is stored, an emptied one removed; lines the
+        # request leaves out stay as they are
+        for key in sorted(_TEXT_PARAMS & payload.model_fields_set):
+            value = (params[key] or "").strip()
+            if value:
+                cx.execute(text("""
+                    INSERT INTO doc_params (doc_number, key, value_text)
+                    VALUES (:n, :k, :v)
+                    ON CONFLICT (doc_number, key) DO UPDATE SET value_text = EXCLUDED.value_text
+                """), {"n": payload.doc_number, "k": key, "v": value})
+            else:
+                cx.execute(text(
+                    "DELETE FROM doc_params WHERE doc_number = :n AND key = :k"
+                ), {"n": payload.doc_number, "k": key})
 
     return {"ok": True, "doc_number": row["doc_number"]}

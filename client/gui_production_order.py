@@ -13,13 +13,14 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QMessageBox,
     QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView
+    QHeaderView, QPlainTextEdit, QScrollArea
 )
 
 from formatting import (
     parse_int_sr, parse_float_sr, fmt_int_sr, fmt_float_sr,
     fmt_cylinder_from_zuba, _fmt_cylinder,
 )
+from order_text import OPIS_DEFAULT, napred_ide_text, alati_text
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -83,6 +84,9 @@ class MainWindow(QMainWindow):
 
         # Field edits auto-filled by the šifra lookup -> the text it put there
         self._autofilled = {}
+        # The ALATI line as last filled in automatically (from the chosen die
+        # or a past order); a line typed by hand is not replaced
+        self._alati_auto = ""
 
         # ---- Top title ----
         self.title_lbl = QLabel("NALOG ZA PROIZVODNJU —")
@@ -253,6 +257,44 @@ class MainWindow(QMainWindow):
         stampa_widget = QWidget()
         stampa_widget.setLayout(stampa_layout)
 
+        # ---- NAPRED IDE: which letter of the name is printed first ----
+        self.napred_slovo_edit = QLineEdit()
+        self.napred_slovo_edit.setPlaceholderText("W")
+        self.napred_slovo_edit.setMaxLength(5)
+        self.napred_slovo_edit.setFixedWidth(60)
+        self.napred_naziv_edit = QLineEdit()
+        self.napred_naziv_edit.setPlaceholderText("EHW")
+        self.napred_slovo_edit.textChanged.connect(self.refresh_napred_display)
+        self.napred_naziv_edit.textChanged.connect(self.refresh_napred_display)
+
+        self.napred_display = QLineEdit()
+        self.napred_display.setReadOnly(True)
+        self.napred_display.setPlaceholderText("(unesite slovo i naziv...)")
+
+        napred_inputs = QHBoxLayout()
+        napred_inputs.addWidget(QLabel("slovo"))
+        napred_inputs.addWidget(self.napred_slovo_edit)
+        napred_inputs.addWidget(QLabel("u nazivu"))
+        napred_inputs.addWidget(self.napred_naziv_edit, 1)
+
+        napred_layout = QVBoxLayout()
+        napred_layout.setContentsMargins(0, 0, 0, 0)
+        napred_layout.setSpacing(4)
+        napred_layout.addLayout(napred_inputs)
+        napred_layout.addWidget(self.napred_display)
+
+        napred_widget = QWidget()
+        napred_widget.setLayout(napred_layout)
+
+        # ---- ALATI line as the order prints it (filled from the chosen die) ----
+        self.alati_nalog_edit = QLineEdit()
+        self.alati_nalog_edit.setPlaceholderText("štancna oznake ..., Z-...")
+
+        # ---- OPIS ----
+        self.opis_edit = QPlainTextEdit()
+        self.opis_edit.setPlainText(OPIS_DEFAULT)
+        self.opis_edit.setFixedHeight(self.opis_edit.fontMetrics().lineSpacing() * 4 + 12)
+
         # ---- Form ----
         form = QFormLayout()
         form.addRow("MAŠINA:", self.machine_cb)
@@ -267,20 +309,29 @@ class MainWindow(QMainWindow):
         form.addRow("ROK ZA ISPORUKU:", self.rok_edit)
         form.addRow("ŠIFRA BOJA:", colors_widget)
         form.addRow("ŠTAMPA PREMA PRIPREMI:", stampa_widget)
+        form.addRow("NAPRED IDE:", napred_widget)
+        form.addRow("ALATI (u nalogu):", self.alati_nalog_edit)
+        form.addRow("OPIS:", self.opis_edit)
 
         center = QWidget()
         center.setLayout(form)
 
+        # The form is taller than some screens: scroll instead of growing
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setWidget(center)
+
         root_layout = QVBoxLayout()
         root_layout.addWidget(self.title_lbl)
         root_layout.addLayout(top_btns)
-        root_layout.addWidget(center)
+        root_layout.addWidget(scroll)
 
         wrap = QWidget()
         wrap.setLayout(root_layout)
         self.setCentralWidget(wrap)
 
-        self.resize(820, 600)
+        self.resize(820, 760)
         self.load_machines()
 
     # ------------------------------------------------------------------
@@ -380,6 +431,10 @@ class MainWindow(QMainWindow):
         self.mat_edit.setText(hit.get("materijal") or "")
         self.sirina_edit.setText(hit.get("sirina") or "")
         self.narucilac_edit.setText(hit.get("narucilac") or "")
+        # The past order's ALATI line as it was printed; choosing a die
+        # afterwards replaces it
+        self._alati_auto = hit.get("alati") or ""
+        self.alati_nalog_edit.setText(self._alati_auto)
         self._autofilled = {}   # the order's values are not from the catalogue
         # An exactly matching catalogue product supplies customer/material IDs
         # (and its non-empty fields); series dates are loaded either way
@@ -550,6 +605,11 @@ class MainWindow(QMainWindow):
         self.recompute_kolicina_display()
         self.alati_table.hide()
 
+        # The order's ALATI line follows the chosen die, unless typed by hand
+        if self.alati_nalog_edit.text() in ("", self._alati_auto):
+            self._alati_auto = alati_text(best.get("oznaka_stancne") or "", self.k_broj_zuba)
+            self.alati_nalog_edit.setText(self._alati_auto)
+
         # Backfill Cilindar on existing color rows that are still empty
         new_cylinder = fmt_cylinder_from_zuba(self.k_broj_zuba)
 
@@ -640,6 +700,11 @@ class MainWindow(QMainWindow):
             )
         self.stampa_display.setText(text)
 
+    def refresh_napred_display(self):
+        self.napred_display.setText(napred_ide_text(
+            self.napred_slovo_edit.text(), self.napred_naziv_edit.text()
+        ))
+
     def on_add_series_date(self):
         sifra = self.sifra_edit.text().strip()
         if not sifra:
@@ -696,6 +761,10 @@ class MainWindow(QMainWindow):
             "rows_wide":             self.k_rows_wide,
             "kolicina_note":         self.k_note or None,
             "rok_isporuke":          rok_py.isoformat() if rok_py else None,
+            "napred_slovo":          self.napred_slovo_edit.text().strip() or None,
+            "napred_naziv":          self.napred_naziv_edit.text().strip() or None,
+            "alati":                 self.alati_nalog_edit.text().strip() or None,
+            "opis":                  self.opis_edit.toPlainText().strip() or None,
         }
 
         try:
