@@ -94,14 +94,13 @@ _QUANTITY_RE = re.compile(
 
 # A line with only some of those figures, laid out the same way: the GUI
 # writes "(20.000 kom)" when no die is chosen, and some orders have no
-# per-metre figure ("1650 m dobrih (20.000 kom)"). Only that layout is read,
-# optionally followed by a " - note" that doesn't start with a number;
-# anything else ("x 2", "po roli", a range or a sum) is left for review.
+# per-metre figure ("1650 m dobrih (20.000 kom)"). Only a line that is just
+# that is read; anything else, even a note ("- po roli", "x 2"), or a range
+# or a sum, is left for review.
 _NUM = r"\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?![\d.,])|\d[\d.,]*"   # "20 000,00" or "20.000,00"
 _PARTIAL_QUANTITY_RE = re.compile(
     rf"^\s*(?:(?P<m_dobrih>{_NUM})\s*m(?:etara|etra)?\.?(?:\s*dobrih)?\s*)?"
-    rf"\(?\s*(?P<kom>{_NUM})\s*(?:kom|pari|kompleta?)\b\.?\s*\)?"
-    r"\s*(?:[-–—](?!\s*\d).*)?$",
+    rf"\(?\s*(?P<kom>{_NUM})\s*(?:kom|pari|kompleta?)\b\.?\s*\)?\s*$",
     re.IGNORECASE,
 )
 

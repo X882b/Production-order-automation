@@ -187,6 +187,7 @@ def test_warns_when_die_code_is_not_recognised():
     ("KOLIČINA: 1650 m dobrih (2 x 10.000 kom) (12,23 kom/m)",
      "KOLIČINA found but not extracted: m dobrih, kom, kom/m"),
     ("KOLIČINA: 1650 m, dodati 50 m (20.000 kom)",       "KOLIČINA found but not extracted: m dobrih, kom"),
+    ("KOLIČINA: (20.000 kom) - rolne po 500 m",          "KOLIČINA found but not extracted: kom"),
 ])
 def test_warns_about_quantity_figures_that_are_not_extracted(make_docx, line, warning):
     meta = watcher.parse_production_order(make_docx(["ŠIFRA: DEMO-1", line]))
@@ -200,8 +201,6 @@ def test_warns_about_quantity_figures_that_are_not_extracted(make_docx, line, wa
     "KOLIČINA: (20.000 kom)",               # the GUI's line when no die is chosen
     "KOLIČINA: 1650 m dobrih (20.000 kom)",  # no per-metre figure written
     "KOLIČINA: 1650 m (20.000 kom)",
-    "KOLIČINA: (20.000 kom) - isporuka do 15.10.",
-    "KOLIČINA: (20.000 kom) - rolne po 500 m",   # metres in a note aren't a figure
 ])
 def test_no_quantity_warning_when_written_figures_are_extracted(make_docx, line):
     meta = watcher.parse_production_order(make_docx([line]))
@@ -245,7 +244,6 @@ def test_parse_quantity(text, expected):
 
 @pytest.mark.parametrize("text, expected", [
     ("(20.000 kom)", {"kolicina_kom_naruceno": 20000}),
-    ("(20.000 kom) - hitno", {"kolicina_kom_naruceno": 20000}),
     ("20.000 kom", {"kolicina_kom_naruceno": 20000}),
     ("(20.000,00 kom)", {"kolicina_kom_naruceno": 20000}),
     ("(5.000 pari)", {"kolicina_kom_naruceno": 5000}),
@@ -256,7 +254,9 @@ def test_parse_quantity(text, expected):
     ("1650 m (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
     ("1650 metara dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
     ("1650 m. dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
-    ("(20.000 kom) - rolne po 500 m", {"kolicina_kom_naruceno": 20000}),
+    ("(20.000 kom) - hitno", {}),           # a note could change the count
+    ("(10.000 kom) - po roli", {}),
+    ("(10.000 kom) - x 2", {}),
     ("(1,5 kom)", {}),                       # not a piece count
     ("po dogovoru", {}),
     # Any other layout is left for review: per-roll or per-variant counts,
