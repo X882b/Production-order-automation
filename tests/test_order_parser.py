@@ -177,24 +177,28 @@ def test_warns_when_die_code_is_not_recognised():
     assert "ALATI found but die/tool code was not extracted" in warnings
 
 
-@pytest.mark.parametrize("line", [
-    "KOLIČINA: 1650 m dobrih (20.000 kom)",   # no per-metre figure
-    "KOLIČINA: 20.000 kom",
-    "KOLIČINA: po dogovoru",
+@pytest.mark.parametrize("line, warning", [
+    ("KOLIČINA: po dogovoru",                            "KOLIČINA found but not extracted: kom"),
+    ("KOLIČINA: (1,5 kom)",                              "KOLIČINA found but not extracted: kom"),
+    ("KOLIČINA: 1650 m dobrih (20.000 kom) (12,2,3 kom/m)", "KOLIČINA found but not extracted: kom/m"),
+    ("KOLIČINA: 1645,5 m dobrih (20.000 kom)",           "KOLIČINA found but not extracted: m dobrih"),
 ])
-def test_warns_when_quantities_are_not_extracted(make_docx, line):
+def test_warns_about_quantity_figures_that_are_not_extracted(make_docx, line, warning):
     meta = watcher.parse_production_order(make_docx(["ŠIFRA: DEMO-1", line]))
 
     assert meta["kolicina_text"]
-    assert "KOLIČINA found but quantities were not extracted" in watcher.parse_warnings(meta)
+    assert warning in watcher.parse_warnings(meta)
 
 
-def test_no_quantity_warning_when_quantities_are_extracted(make_docx):
-    meta = watcher.parse_production_order(make_docx([
-        "KOLIČINA: 20 m dobrih (25.000 kom) (1.234,50 kom/m)",
-    ]))
+@pytest.mark.parametrize("line", [
+    "KOLIČINA: 20 m dobrih (25.000 kom) (1.234,50 kom/m)",
+    "KOLIČINA: (20.000 kom)",               # the GUI's line when no die is chosen
+    "KOLIČINA: 1650 m dobrih (20.000 kom)",  # no per-metre figure written
+])
+def test_no_quantity_warning_when_written_figures_are_extracted(make_docx, line):
+    meta = watcher.parse_production_order(make_docx([line]))
 
-    assert "KOLIČINA found but quantities were not extracted" not in watcher.parse_warnings(meta)
+    assert not [w for w in watcher.parse_warnings(meta) if w.startswith("KOLIČINA")]
 
 
 # ── field helpers ────────────────────────────────────────────────────────────
@@ -219,6 +223,10 @@ def test_to_iso_date(text, expected):
     ("20 m dobrih (25.000 kom) (1.234,50 kom/m)", (20, 25000, 1234.5)),
     ("2 m dobrih (2.500.000 kom) (1.234.567,8 kom/m)", (2, 2500000, 1234567.8)),
     ("1650 m dobrih (20.000 kom) (12.23 kom/m)", (1650, 20000, 12.23)),
+    ("1650 m dobrih (20.000,00 kom) (12,23 kom/m)", (1650, 20000, 12.23)),
+    ("1650 m dobrih (20 000 kom) (12,23 kom/m)", (1650, 20000, 12.23)),
+    ("1650 m dobrih (20,000 kom) (12,23 kom/m)", (1650, 20000, 12.23)),
+    ("1650 m dobrih (20000.00 kom) (12,23 kom/m)", (1650, 20000, 12.23)),
 ])
 def test_parse_quantity(text, expected):
     q = watcher._parse_quantity(text)
@@ -227,8 +235,19 @@ def test_parse_quantity(text, expected):
     assert q["kolicina_kom_po_m"] == pytest.approx(expected[2])
 
 
-def test_quantity_without_per_metre_figure_is_not_parsed():
-    assert watcher._parse_quantity("1650 m dobrih (20.000 kom)") == {}
+@pytest.mark.parametrize("text, expected", [
+    ("(20.000 kom)", {"kolicina_kom_naruceno": 20000}),
+    ("(20.000 kom) - hitno", {"kolicina_kom_naruceno": 20000}),
+    ("20.000 kom", {"kolicina_kom_naruceno": 20000}),
+    ("(20.000,00 kom)", {"kolicina_kom_naruceno": 20000}),
+    ("(5.000 pari)", {"kolicina_kom_naruceno": 5000}),
+    ("1650 m dobrih (20.000 kom)", {"kolicina_m_dobrih": 1650, "kolicina_kom_naruceno": 20000}),
+    ("(12,23 kom/m)", {"kolicina_kom_po_m": 12.23}),
+    ("(1,5 kom)", {}),                       # not a piece count
+    ("po dogovoru", {}),
+])
+def test_quantity_line_with_some_figures(text, expected):
+    assert watcher._parse_quantity(text) == expected
 
 
 @pytest.mark.parametrize("m_dobrih, kom, kom_po_m", [

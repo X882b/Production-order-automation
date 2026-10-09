@@ -92,6 +92,18 @@ _QUANTITY_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Lines without all three figures are read figure by figure: the GUI writes
+# "(20.000 kom)" when no die is chosen, and some orders have no per-metre
+# figure ("1650 m dobrih (20.000 kom)")
+_M_DOBRIH_RE = re.compile(r"(?<![\d.,])(?P<n>\d[\d.]*(?:\s\d{3})*)\s*m\s*dobrih\b", re.IGNORECASE)
+_KOM_RE = re.compile(
+    r"(?<![\d.,])(?P<n>\d[\d.,]*(?:\s\d{3})*)\s*(?:kom|pari|kompleta?)\b\.?(?!\s*/)",
+    re.IGNORECASE,
+)
+_KOM_PO_M_RE = re.compile(r"(?<![\d.,])(?P<n>\d[\d.,]*)\s*(?:kom|pari|kompleta?)\s*/\s*m\b", re.IGNORECASE)
+
+_QTY_KEYS = ("kolicina_m_dobrih", "kolicina_kom_naruceno", "kolicina_kom_po_m")
+
 # Date:  "24.07.2025." or "24.07.2025"
 _DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\b")
 
@@ -132,11 +144,25 @@ def _to_iso_date(text: str) -> str | None:
 
 def _parse_quantity(text: str) -> dict:
     m = _QUANTITY_RE.search(text)
-    if not m:
-        return {}
+    if m:
+        raw = m.groupdict()
+    else:
+        raw = {}
+        for group, rx in (("m_dobrih", _M_DOBRIH_RE), ("kom", _KOM_RE), ("kom_po_m", _KOM_PO_M_RE)):
+            part = rx.search(text)
+            if part:
+                raw[group] = part.group("n")
 
     def _int(s):
-        return int(re.sub(r"[.,\s]", "", s))
+        # "20.000", "20 000", "20,000" and "20.000,00" are all 20000; a real
+        # fraction ("1,5") is not a count, so it's left for review
+        s = re.sub(r"\s", "", s)
+        decimals = re.fullmatch(r"(.*?)[.,](\d{1,2})", s)
+        if decimals:
+            if int(decimals.group(2)):
+                raise ValueError(s)
+            s = decimals.group(1)
+        return int(re.sub(r"[.,]", "", s))
 
     def _float(s):
         # Same rules as parse_float_sr in client/formatting.py, which formats
@@ -154,8 +180,10 @@ def _parse_quantity(text: str) -> dict:
         ("kolicina_kom_naruceno", "kom",      _int),
         ("kolicina_kom_po_m",     "kom_po_m", _float),
     ):
+        if group not in raw:
+            continue
         try:
-            result[key] = conv(m.group(group))
+            result[key] = conv(raw[group])
         except ValueError:
             pass   # leave unparsed; parse_warnings flags the order for review
     return result
@@ -552,11 +580,19 @@ def parse_warnings(meta: dict) -> list[str]:
             warnings.append(message)
     if meta.get("alati_raw") and not meta.get("stancna_code"):
         warnings.append("ALATI found but die/tool code was not extracted")
-    if meta.get("kolicina_text") and any(
-        meta.get(key) is None
-        for key in ("kolicina_m_dobrih", "kolicina_kom_naruceno", "kolicina_kom_po_m")
-    ):
-        warnings.append("KOLIČINA found but quantities were not extracted")
+    kolicina = meta.get("kolicina_text") or ""
+    if kolicina:
+        # The piece count is always expected; the other two only if written
+        unread = [
+            name for name, key, written in (
+                ("m dobrih", "kolicina_m_dobrih",     re.search(r"m\s*dobrih", kolicina, re.IGNORECASE)),
+                ("kom",      "kolicina_kom_naruceno", True),
+                ("kom/m",    "kolicina_kom_po_m",     re.search(r"/\s*m\b", kolicina, re.IGNORECASE)),
+            )
+            if written and meta.get(key) is None
+        ]
+        if unread:
+            warnings.append("KOLIČINA found but not extracted: " + ", ".join(unread))
     if not meta.get("color_rows"):
         warnings.append("no color/lacquer rows parsed")
     return warnings
@@ -612,9 +648,10 @@ def finalize_new_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              kolicina_kom_naruceno  = :kom_naruceno,
-              kolicina_kom_po_m      = :kom_po_m,
-              kolicina_m_dobrih      = :m_dobrih,
+              -- figures already stored (e.g. by the GUI) stay when none could be read
+              kolicina_kom_naruceno  = CASE WHEN :keep_qty THEN kolicina_kom_naruceno ELSE :kom_naruceno END,
+              kolicina_kom_po_m      = CASE WHEN :keep_qty THEN kolicina_kom_po_m ELSE :kom_po_m END,
+              kolicina_m_dobrih      = CASE WHEN :keep_qty THEN kolicina_m_dobrih ELSE :m_dobrih END,
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
@@ -632,6 +669,7 @@ def finalize_new_doc(
             "kom_naruceno": meta.get("kolicina_kom_naruceno"),
             "kom_po_m":     meta.get("kolicina_kom_po_m"),
             "m_dobrih":     meta.get("kolicina_m_dobrih"),
+            "keep_qty":     all(meta.get(k) is None for k in _QTY_KEYS),
             "rok_isporuke": meta.get("rok_isporuke"),
         })
 
@@ -710,9 +748,10 @@ def update_existing_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              kolicina_kom_naruceno  = :kom_naruceno,
-              kolicina_kom_po_m      = :kom_po_m,
-              kolicina_m_dobrih      = :m_dobrih,
+              -- figures already stored (e.g. by the GUI) stay when none could be read
+              kolicina_kom_naruceno  = CASE WHEN :keep_qty THEN kolicina_kom_naruceno ELSE :kom_naruceno END,
+              kolicina_kom_po_m      = CASE WHEN :keep_qty THEN kolicina_kom_po_m ELSE :kom_po_m END,
+              kolicina_m_dobrih      = CASE WHEN :keep_qty THEN kolicina_m_dobrih ELSE :m_dobrih END,
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
@@ -730,6 +769,7 @@ def update_existing_doc(
             "kom_naruceno": meta.get("kolicina_kom_naruceno"),
             "kom_po_m":     meta.get("kolicina_kom_po_m"),
             "m_dobrih":     meta.get("kolicina_m_dobrih"),
+            "keep_qty":     all(meta.get(k) is None for k in _QTY_KEYS),
             "rok_isporuke": meta.get("rok_isporuke"),
         })
 
