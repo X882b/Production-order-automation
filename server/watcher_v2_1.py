@@ -129,7 +129,14 @@ def _parse_quantity(text: str) -> dict:
         return int(re.sub(r"[.,\s]", "", s))
 
     def _float(s):
-        return float(s.strip().replace(" ", "").replace(",", "."))
+        # Same rules as parse_float_sr in client/formatting.py, which formats
+        # this figure in the GUI ("1.234,50"); the server image has no client/
+        s = s.strip().replace(" ", "")
+        if "," in s:             # dots group thousands, comma is the decimal
+            s = s.replace(".", "").replace(",", ".")
+        elif s.count(".") > 1:   # 1.234.567
+            s = s.replace(".", "")
+        return float(s)
 
     result = {}
     for key, group, conv in (
@@ -535,6 +542,11 @@ def parse_warnings(meta: dict) -> list[str]:
             warnings.append(message)
     if meta.get("alati_raw") and not meta.get("stancna_code"):
         warnings.append("ALATI found but die/tool code was not extracted")
+    if meta.get("kolicina_text") and any(
+        meta.get(key) is None
+        for key in ("kolicina_m_dobrih", "kolicina_kom_naruceno", "kolicina_kom_po_m")
+    ):
+        warnings.append("KOLIČINA found but quantities were not extracted")
     if not meta.get("color_rows"):
         warnings.append("no color/lacquer rows parsed")
     return warnings

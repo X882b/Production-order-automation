@@ -159,6 +159,26 @@ def test_warns_when_die_code_is_not_recognised():
     assert "ALATI found but die/tool code was not extracted" in warnings
 
 
+@pytest.mark.parametrize("line", [
+    "KOLIČINA: 1650 m dobrih (20.000 kom)",   # no per-metre figure
+    "KOLIČINA: 20.000 kom",
+    "KOLIČINA: po dogovoru",
+])
+def test_warns_when_quantities_are_not_extracted(make_docx, line):
+    meta = watcher.parse_production_order(make_docx(["ŠIFRA: DEMO-1", line]))
+
+    assert meta["kolicina_text"]
+    assert "KOLIČINA found but quantities were not extracted" in watcher.parse_warnings(meta)
+
+
+def test_no_quantity_warning_when_quantities_are_extracted(make_docx):
+    meta = watcher.parse_production_order(make_docx([
+        "KOLIČINA: 20 m dobrih (25.000 kom) (1.234,50 kom/m)",
+    ]))
+
+    assert "KOLIČINA found but quantities were not extracted" not in watcher.parse_warnings(meta)
+
+
 # ── field helpers ────────────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("text, expected", [
@@ -178,6 +198,9 @@ def test_to_iso_date(text, expected):
     ("1.645 m dobrih (20.000 kom) (12,23 kom/m)", (1645, 20000, 12.23)),
     ("500 m dobrih (5.000 pari) (10,5 pari/m)", (500, 5000, 10.5)),
     ("300 m dobrih (1.200 kompleta) (4 kompleta/m)", (300, 1200, 4.0)),
+    ("20 m dobrih (25.000 kom) (1.234,50 kom/m)", (20, 25000, 1234.5)),
+    ("2 m dobrih (2.500.000 kom) (1.234.567,8 kom/m)", (2, 2500000, 1234567.8)),
+    ("1650 m dobrih (20.000 kom) (12.23 kom/m)", (1650, 20000, 12.23)),
 ])
 def test_parse_quantity(text, expected):
     q = watcher._parse_quantity(text)
@@ -194,14 +217,9 @@ def test_quantity_without_per_metre_figure_is_not_parsed():
     (1650, 20_000, 12.231),
     (12_340, 1_250_000, 101.3),
     (10, 5, 0.5),
-    pytest.param(
-        20, 25_000, 1234.5,
-        marks=pytest.mark.xfail(
-            strict=True,
-            reason="1000+ kom/m is written as '1.234,50', which _parse_quantity "
-                   "cannot read, so kolicina_kom_po_m is silently dropped",
-        ),
-    ),
+    (20, 25_000, 1234.5),        # "1.234,50 kom/m"
+    (1, 1_500_000, 1_234_567.8),
+    (3, 3_000, 999.999),         # rounds up to "1.000,00 kom/m"
 ])
 def test_reads_the_quantity_line_the_gui_writes(m_dobrih, kom, kom_po_m):
     # Same format string as the GUI (recompute_kolicina_display, KolicinaDialog)
