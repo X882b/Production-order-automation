@@ -95,8 +95,17 @@ _QUANTITY_RE = re.compile(
 # Date:  "24.07.2025." or "24.07.2025"
 _DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\b")
 
-# Extract die/tool code from ALATI lines, e.g. "ABC25-02-12345", "XYZ14-05-54321"
-_STANCNA_RE = re.compile(r"\b(?:ABC|XYZ)[A-Z0-9-]*\d[A-Z0-9-]*\b", re.IGNORECASE)
+# Extract die/tool code from ALATI lines, e.g. "ABC25-02-12345", "XYZ14-05-54321".
+# STANCNA_PREFIXES (comma-separated, e.g. "ABC,XYZ") limits it to codes starting
+# with the shop's own die prefixes, which also catches codes without a hyphen
+# ("XYZ7"). Without it, any letters-then-number code with hyphens counts.
+def _stancna_re(prefixes: str) -> re.Pattern:
+    names = [re.escape(p.strip()) for p in prefixes.split(",") if p.strip()]
+    if names:
+        return re.compile(r"\b(?:" + "|".join(names) + r")[A-Z0-9-]*\d[A-Z0-9-]*\b", re.IGNORECASE)
+    return re.compile(r"\b[A-Z]{2,6}\d*(?:-[A-Z0-9]+)*-\d+\b", re.IGNORECASE)
+
+_STANCNA_RE = _stancna_re(os.getenv("STANCNA_PREFIXES", ""))
 
 # Standalone date paragraph (the signing date at the bottom of the doc)
 _STANDALONE_DATE_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}\.?\s*$")

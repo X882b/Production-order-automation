@@ -135,6 +135,10 @@ Fill in `.env`:
   there and the desktop client opens them from it.
 - `HOST_UID`, `HOST_GID`: output of `id -u` and `id -g`, so filed orders
   stay owned by you
+- `STANCNA_PREFIXES` (optional): your die-code prefixes, comma-separated.
+  The watcher then reads only ALATI codes that start with one of them, with
+  or without hyphens. Without it, it takes any code shaped like
+  `ABC25-02-12345`.
 
 ### 2. Create the database
 

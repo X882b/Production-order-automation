@@ -56,6 +56,7 @@ services:
       MEILI_KEY: ${MEILI_MASTER_KEY}
       BASE_LOCAL: /docs
       WATCH_USE_POLLING: "1"
+      STANCNA_PREFIXES: ${STANCNA_PREFIXES:-}
       PYTHONUNBUFFERED: "1"
       PYTHONDONTWRITEBYTECODE: "1"
     command: ["python", "-m", "server.watcher_v2_1"]

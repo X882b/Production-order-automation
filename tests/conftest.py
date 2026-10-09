@@ -7,6 +7,8 @@ Postgres or Meilisearch; the parsing code under test makes no database calls.
 import os
 
 os.environ.setdefault("PG_DSN", "sqlite://")
+# The tests expect the generic die-code pattern, whatever the local setting
+os.environ["STANCNA_PREFIXES"] = ""
 
 import pytest
 from docx import Document

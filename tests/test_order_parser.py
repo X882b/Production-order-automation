@@ -153,6 +153,21 @@ def test_warnings_for_an_empty_order():
     ]
 
 
+@pytest.mark.parametrize("prefixes, text, expected", [
+    ("", "štanca ABC25-02-12345, obim 225,417 mm", "ABC25-02-12345"),
+    ("", "DEMO-T-001", "DEMO-T-001"),
+    ("", "štanca po uzorku, Z-93, 3 x 2", None),
+    ("ABC,XYZ", "PE-60, štanca ABC25-02-12345", "ABC25-02-12345"),   # listed prefixes only
+    ("ABC,XYZ", "XYZ7", "XYZ7"),                                     # no hyphen needed
+    (" ABC , XYZ ,", "xyz14-05-54321", "xyz14-05-54321"),
+    ("ABC,XYZ", "DEMO-T-001", None),
+])
+def test_die_code_pattern(prefixes, text, expected):
+    m = watcher._stancna_re(prefixes).search(text)
+
+    assert (m.group(0) if m else None) == expected
+
+
 def test_warns_when_die_code_is_not_recognised():
     warnings = watcher.parse_warnings({"alati_raw": "štanca po uzorku"})
 
