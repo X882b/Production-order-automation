@@ -92,18 +92,18 @@ _QUANTITY_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Lines without all three figures are read figure by figure: the GUI writes
-# "(20.000 kom)" when no die is chosen, and some orders have no per-metre
-# figure ("1650 m dobrih (20.000 kom)"). A number is space-grouped ("20 000,00")
-# or digits with dots and commas, and never starts inside another number or
-# right after a date ("do 15.08. 500 kom")
-_NUM = r"(?<![\d.,])(?<!\d\s)(?P<n>\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?![\d.,])|\d[\d.,]*)"
-_M_DOBRIH_RE = re.compile(_NUM + r"\s*m(?:et(?:ara|ra)?)?\b\.?(?!\s*/)", re.IGNORECASE)
-_KOM_RE      = re.compile(_NUM + r"\s*(?:kom|pari|kompleta?)\b\.?(?!\s*/)", re.IGNORECASE)
-_KOM_PO_M_RE = re.compile(_NUM + r"\s*(?:kom|pari|kompleta?)\s*/\s*m\b", re.IGNORECASE)
-
-# "2 x 10.000 kom", "20 rolni po 1.000 kom": a count per roll or per variant
-_MULTIPLIER_RE = re.compile(r"(?:(?<![a-zčćžšđ])x|[×*]|\bpo)\s*$", re.IGNORECASE)
+# A line with only some of those figures, laid out the same way: the GUI
+# writes "(20.000 kom)" when no die is chosen, and some orders have no
+# per-metre figure ("1650 m dobrih (20.000 kom)"). Only that layout is read,
+# optionally followed by a " - note" that doesn't start with a number;
+# anything else ("x 2", "po roli", a range or a sum) is left for review.
+_NUM = r"\d{1,3}(?:\s\d{3})+(?:[.,]\d{1,2})?(?![\d.,])|\d[\d.,]*"   # "20 000,00" or "20.000,00"
+_PARTIAL_QUANTITY_RE = re.compile(
+    rf"^\s*(?:(?P<m_dobrih>{_NUM})\s*m(?:etara|etra)?\.?(?:\s*dobrih)?\s*)?"
+    rf"\(?\s*(?P<kom>{_NUM})\s*(?:kom|pari|kompleta?)\b\.?\s*\)?"
+    r"\s*(?:[-–—](?!\s*\d).*)?$",
+    re.IGNORECASE,
+)
 
 # Date:  "24.07.2025." or "24.07.2025"
 _DATE_RE = re.compile(r"\b(\d{1,2})\.(\d{1,2})\.(\d{4})\.?\b")
@@ -144,19 +144,10 @@ def _to_iso_date(text: str) -> str | None:
 
 
 def _parse_quantity(text: str) -> dict:
-    m = _QUANTITY_RE.search(text)
-    if m:
-        raw = m.groupdict()
-    else:
-        raw = {}
-        for group, rx in (("m_dobrih", _M_DOBRIH_RE), ("kom", _KOM_RE), ("kom_po_m", _KOM_PO_M_RE)):
-            # Only a figure that can't be confused: the one of its kind in the
-            # line, and for pieces not a count per roll or per variant
-            found = list(rx.finditer(text))
-            if len(found) == 1 and not (
-                group == "kom" and _MULTIPLIER_RE.search(text[:found[0].start()])
-            ):
-                raw[group] = found[0].group("n")
+    m = _QUANTITY_RE.search(text) or _PARTIAL_QUANTITY_RE.match(text)
+    if not m:
+        return {}
+    raw = {group: value for group, value in m.groupdict().items() if value is not None}
 
     def _int(s):
         # "20.000", "20 000", "20,000" and "20.000,00" are all 20000; a real
@@ -591,12 +582,14 @@ def parse_warnings(meta: dict) -> list[str]:
     kolicina = meta.get("kolicina_text") or ""
     if kolicina:
         # The piece count is always expected; the other two only if written
+        # before any " - note"
+        figures = re.sub(r"\s*[-–—](?!\s*\d).*", "", kolicina)
         unread = [
             name for name, key, written in (
                 ("m dobrih", "kolicina_m_dobrih",     re.search(
-                    r"\d\s*m(?:et(?:ara|ra)?)?\b\.?(?!\s*/)|m\s*dobrih", kolicina, re.IGNORECASE)),
+                    r"\d\s*m(?:et(?:ara|ra)?)?\b\.?(?!\s*/)|m\s*dobrih", figures, re.IGNORECASE)),
                 ("kom",      "kolicina_kom_naruceno", True),
-                ("kom/m",    "kolicina_kom_po_m",     re.search(r"/\s*m\b", kolicina, re.IGNORECASE)),
+                ("kom/m",    "kolicina_kom_po_m",     re.search(r"/\s*m\b", figures, re.IGNORECASE)),
             )
             if written and meta.get(key) is None
         ]
@@ -657,10 +650,18 @@ def finalize_new_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              -- a figure the file doesn't give keeps its stored value (e.g. from the GUI)
+              -- A figure the file doesn't give keeps its stored value (e.g. from
+              -- the GUI), unless the file has a different piece count: then the
+              -- stored metres and per-metre figure no longer fit and are cleared
               kolicina_kom_naruceno  = COALESCE(:kom_naruceno, kolicina_kom_naruceno),
-              kolicina_kom_po_m      = COALESCE(:kom_po_m, kolicina_kom_po_m),
-              kolicina_m_dobrih      = COALESCE(:m_dobrih, kolicina_m_dobrih),
+              kolicina_kom_po_m      = CASE WHEN :kom_po_m IS NOT NULL THEN :kom_po_m
+                                            WHEN :kom_naruceno IS NULL
+                                              OR :kom_naruceno = kolicina_kom_naruceno
+                                            THEN kolicina_kom_po_m END,
+              kolicina_m_dobrih      = CASE WHEN :m_dobrih IS NOT NULL THEN :m_dobrih
+                                            WHEN :kom_naruceno IS NULL
+                                              OR :kom_naruceno = kolicina_kom_naruceno
+                                            THEN kolicina_m_dobrih END,
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
@@ -756,10 +757,18 @@ def update_existing_doc(
               dimenzija              = :dimenzija,
               sirina                 = :sirina,
               kolicina_text          = :kolicina_text,
-              -- a figure the file doesn't give keeps its stored value (e.g. from the GUI)
+              -- A figure the file doesn't give keeps its stored value (e.g. from
+              -- the GUI), unless the file has a different piece count: then the
+              -- stored metres and per-metre figure no longer fit and are cleared
               kolicina_kom_naruceno  = COALESCE(:kom_naruceno, kolicina_kom_naruceno),
-              kolicina_kom_po_m      = COALESCE(:kom_po_m, kolicina_kom_po_m),
-              kolicina_m_dobrih      = COALESCE(:m_dobrih, kolicina_m_dobrih),
+              kolicina_kom_po_m      = CASE WHEN :kom_po_m IS NOT NULL THEN :kom_po_m
+                                            WHEN :kom_naruceno IS NULL
+                                              OR :kom_naruceno = kolicina_kom_naruceno
+                                            THEN kolicina_kom_po_m END,
+              kolicina_m_dobrih      = CASE WHEN :m_dobrih IS NOT NULL THEN :m_dobrih
+                                            WHEN :kom_naruceno IS NULL
+                                              OR :kom_naruceno = kolicina_kom_naruceno
+                                            THEN kolicina_m_dobrih END,
               rok_isporuke           = :rok_isporuke
             WHERE doc_number = :n
         """), {
