@@ -1,4 +1,4 @@
-# Flexo Order Automation
+# Production Order Automation
 
 A document management system for production orders at a flexographic
 label printing company. Orders are written in Word; this system numbers
