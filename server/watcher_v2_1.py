@@ -103,7 +103,8 @@ def _stancna_re(prefixes: str) -> re.Pattern:
     names = [re.escape(p.strip()) for p in prefixes.split(",") if p.strip()]
     if names:
         return re.compile(r"\b(?:" + "|".join(names) + r")[A-Z0-9-]*\d[A-Z0-9-]*\b", re.IGNORECASE)
-    return re.compile(r"\b[A-Z]{2,6}\d*(?:-[A-Z0-9]+)*-\d+\b", re.IGNORECASE)
+    # A whole code only: "ABC25-02-12345A" is no match rather than "ABC25-02"
+    return re.compile(r"\b[A-Z]{2,6}\d*(?:-[A-Z0-9]+)*-\d+(?![A-Z0-9-])", re.IGNORECASE)
 
 _STANCNA_RE = _stancna_re(os.getenv("STANCNA_PREFIXES", ""))
 

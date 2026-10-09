@@ -157,6 +157,9 @@ def test_warnings_for_an_empty_order():
     ("", "štanca ABC25-02-12345, obim 225,417 mm", "ABC25-02-12345"),
     ("", "DEMO-T-001", "DEMO-T-001"),
     ("", "štanca po uzorku, Z-93, 3 x 2", None),
+    ("", "štanca ABC25-02-12345A", None),    # not cut short to "ABC25-02"
+    ("", "ABC-12345-B", None),
+    ("ABC,XYZ", "štanca ABC25-02-12345A", "ABC25-02-12345A"),
     ("ABC,XYZ", "PE-60, štanca ABC25-02-12345", "ABC25-02-12345"),   # listed prefixes only
     ("ABC,XYZ", "XYZ7", "XYZ7"),                                     # no hyphen needed
     (" ABC , XYZ ,", "xyz14-05-54321", "xyz14-05-54321"),
