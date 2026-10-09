@@ -1,10 +1,10 @@
-# YU-LABEL DMS
+# Flexo Order Automation
 
-A document management system for production orders at a label printing
-company. Orders are written in Word; this system numbers and files them,
-extracts their contents into a database, makes them searchable, and gives
-staff a desktop form for preparing new orders from the product and die
-catalogues.
+A document management system for production orders at a flexographic
+label printing company. Orders are written in Word; this system numbers
+and files them, extracts their contents into a database, makes them
+searchable, and gives staff a desktop form for preparing new orders from
+the product and die catalogues.
 
 ![Production-order form](screenshots/order-form.png)
 
@@ -85,6 +85,7 @@ server/
   routes_*.py               lookups, saving orders, colours, run dates, search
   watcher_v2_1.py           folder watcher and .docx order parser
   schema*.sql               database schema (see Setup)
+  seed_demo.sql             optional fictional customer and product
   requirements.txt          API and watcher dependencies (Docker image)
 client/
   gui_production_order.py   production-order form, the main desktop app
@@ -149,6 +150,14 @@ done
 Run the files in this order. They can be run again safely. On the very
 first start Postgres needs a few seconds to initialise; if `psql` can't
 connect yet, wait and rerun.
+
+To try the form on a fresh install, you can also load a fictional customer
+and product, so that ŠIFRA `DEMO-250101` autofills the form. Leave this out
+on a real database:
+
+```bash
+docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < server/seed_demo.sql
+```
 
 ### 3. Start the services
 

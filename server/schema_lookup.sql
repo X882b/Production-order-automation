@@ -45,28 +45,9 @@ ALTER TABLE documents
   ADD COLUMN IF NOT EXISTS kolicina_text TEXT,
   ADD COLUMN IF NOT EXISTS rok_isporuke DATE;
 
--- Minimal seed data (edit later)
+-- Presses offered in the MAŠINA list
 INSERT INTO machines(name) VALUES
   ('Mark Andy'),
   ('Nilpeter F200'),
   ('Nilpeter FA2500')
 ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO customers(name) VALUES
-  ('Primer d.o.o., Beograd')
-ON CONFLICT (name) DO NOTHING;
-
-INSERT INTO materials(name) VALUES
-  ('PE WHITE/S692')
-ON CONFLICT (name) DO NOTHING;
-
--- Example product row for autofill demo
-INSERT INTO products(sifra, naziv, dimenzija, sirina, customer_id, material_id)
-SELECT
-  'DEMO-250101',
-  'nalepnica Demo sok 0,5 l, P+Z',
-  '65 x 140 mm',
-  '235 mm',
-  (SELECT id FROM customers WHERE name='Primer d.o.o., Beograd'),
-  (SELECT id FROM materials WHERE name='PE WHITE/S692')
-WHERE NOT EXISTS (SELECT 1 FROM products WHERE sifra='DEMO-250101');
