@@ -10,10 +10,10 @@ CREATE TABLE IF NOT EXISTS tools (
 
     broj_zuba TEXT,                  -- keep as text for now
     obim_cilindra_mm NUMERIC,        -- CRITICAL
-    raspored TEXT,                   -- e.g. "3 x 2"
+    raspored TEXT,                   -- "3 x 2": lanes across the web x labels around the cylinder
 
-    rows_long INTEGER,               -- parsed from raspored
-    rows_wide INTEGER,               -- parsed from raspored
+    rows_long INTEGER,               -- labels around the cylinder (raspored's second number)
+    rows_wide INTEGER,               -- lanes across the web (raspored's first number)
 
     active BOOLEAN NOT NULL DEFAULT TRUE
 );
@@ -26,3 +26,19 @@ CREATE INDEX IF NOT EXISTS tools_sheet_name_idx
 
 CREATE INDEX IF NOT EXISTS tools_obim_idx
     ON tools (obim_cilindra_mm);
+
+-- Imports before this fix stored the two numbers of raspored the other way
+-- round. Derive both again from the text; safe to re-run.
+UPDATE tools t
+SET rows_wide = p.parts[1]::int,
+    rows_long = p.parts[2]::int
+FROM (
+    SELECT id,
+           regexp_match(replace(replace(lower(raspored), '×', 'x'), ' ', ''),
+                        '^(\d{1,4})x(\d{1,4})$') AS parts
+    FROM tools
+) p
+WHERE p.id = t.id
+  AND p.parts IS NOT NULL
+  AND (t.rows_wide IS DISTINCT FROM p.parts[1]::int
+       OR t.rows_long IS DISTINCT FROM p.parts[2]::int);

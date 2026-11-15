@@ -64,8 +64,9 @@ def parse_raspored(val):
     if not m:
         return (raw, None, None)
 
-    rows_long = int(m.group(1))
-    rows_wide = int(m.group(2))
+    # "3x2": 3 lanes across the web, 2 labels around the cylinder
+    rows_wide = int(m.group(1))
+    rows_long = int(m.group(2))
     return (raw, rows_long, rows_wide)
 
 

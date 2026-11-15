@@ -234,7 +234,7 @@ Orders and field names are in Serbian.
 | količina; kom; m dobrih | quantity; pieces; metres of good material |
 | štancna, alati | cutting die, tooling |
 | obim cilindra; broj zuba (Z-93) | die cylinder circumference; number of teeth |
-| raspored (3 x 2) | labels per die repeat, along × across the web |
+| raspored (3 x 2) | die layout: lanes across the web × labels around the cylinder |
 | šifra boja; kliše; raster | colour stations; printing plate; anilox screen (lines/cm) |
 | rok za isporuku | delivery date |
 | serija | production run |
