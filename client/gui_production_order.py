@@ -445,7 +445,9 @@ class MainWindow(QMainWindow):
             self.doc_number = num
             self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
             self.rok_edit.setDate(QDate.currentDate().addDays(7))
-            self.refresh_stampa_display()   # which runs count as earlier depends on the order
+            if self.sifra_edit.text().strip():
+                # which of the product's runs count as earlier depends on the order
+                self.refresh_stampa_display()
         except Exception as e:
             QMessageBox.critical(self, "Reserve number error", str(e))
 
@@ -964,6 +966,7 @@ class MainWindow(QMainWindow):
         form would propose now; such a text counts as changed by hand."""
         nap = state.get("napomena") or {}
         kol = state.get("kolicina") or {}
+        self.sifra_timer.stop()   # a lookup still pending would overwrite the saved fields
 
         idx = self.machine_cb.findText(state.get("masina") or "", Qt.MatchFixedString)
         if idx >= 0:
