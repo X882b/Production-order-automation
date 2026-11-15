@@ -41,7 +41,9 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
 - RASPORED in the die catalogue is lanes across the web × labels around the
   cylinder: "3x2" is 3 lanes, 2 around. `rows_wide` is the lanes (first
   number), `rows_long` the labels around (second). The lanes drive the split
-  into rolls; the labels around drive otkucaja/rolna.
+  into rolls; the labels around drive otkucaja/rolna. Orders saved before
+  this was fixed have the two swapped in `documents.rows_long`/`rows_wide`;
+  nothing reads those columns yet.
 - otkucaja/rolna = kom/rolna × die circumference ÷ labels around ÷ 100 (the
   roll's length in tenths of a metre). Checked against the owner's real
   orders (Z-93, 2 around: 1.000 kom → 1476; Z-81, 4 around: 1.225 kom → 788).
