@@ -4,6 +4,7 @@ The order is read at the press and by the watcher, so these lines are built
 word for word as in the order template. Like formatting.py, no Qt here.
 """
 import math
+import re
 
 from formatting import fmt_cylinder_from_zuba, fmt_int_sr
 
@@ -35,10 +36,35 @@ def napred_ide_text(slovo: str, naziv: str) -> str:
     return _napred_ide("Pri štampi", slovo, naziv)
 
 
+def obrnuto_slovo(slovo: str, naziv: str) -> str:
+    """The letter at the other end of the name: 'D', 'Demo' -> 'o';
+    'o', 'Demo ...' -> 'D'; 'e', 'Demo' -> '' (at neither end).
+
+    The finished roll unwinds the other way round from how it was printed,
+    so the name's last letter leads where its first did, and the first where
+    the last did.
+    """
+    slovo = (slovo or "").strip()
+    ends = [ch for ch in (naziv or "") if ch.isalnum()]
+    if not slovo or not ends:
+        return ""
+    first, last = ends[0], ends[-1]
+    for fold in (str, str.casefold):          # as written first, then any case
+        if fold(slovo) == fold(first):
+            return last
+        if fold(slovo) == fold(last):
+            return first
+    return ""
+
+
 def odmotavanje_text(slovo: str, naziv: str) -> str:
-    """NAPOMENA's unwinding line, with the same letter and name:
-    'Pri odmotavanju gotove rolnice napred ide slovo „D“ u nazivu „Demo“.'"""
-    return _napred_ide("Pri odmotavanju gotove rolnice", slovo, naziv)
+    """NAPOMENA's unwinding line, proposed from the letter that leads at the
+    press: 'D', 'Demo' ->
+    'Pri odmotavanju gotove rolnice napred ide slovo „o“ u nazivu „Demo“.'
+
+    Empty when that letter is at neither end of the name.
+    """
+    return _napred_ide("Pri odmotavanju gotove rolnice", obrnuto_slovo(slovo, naziv), naziv)
 
 
 def alati_text(oznaka: str, zuba) -> str:
@@ -54,6 +80,20 @@ def alati_text(oznaka: str, zuba) -> str:
 
 
 # ── NAPOMENA: slitting into rolls ────────────────────────────────────────────
+
+def _mm(text: str) -> str:
+    """'Ø45', '45 mm' -> '45': the form writes Ø and mm itself."""
+    return re.sub(r"(?i)\s*mm\s*$", "", (text or "").replace("Ø", "").replace("ø", "")).strip()
+
+
+def caure_text(unutrasnji: str, spoljni: str, sirina: str) -> str:
+    """'45', '52', '65' -> 'Ø45/Ø52/65 mm': the core's inner and outer
+    diameter and its width. Parts left empty are left out."""
+    parts = [f"Ø{d}" for d in (_mm(unutrasnji), _mm(spoljni)) if d]
+    if _mm(sirina):
+        parts.append(_mm(sirina))
+    return "/".join(parts) + " mm" if parts else ""
+
 
 def rolne_word(n: int) -> str:
     """Serbian plural after a number: 1 rolna, 3 rolne, 99 rolni (11–14 rolni)."""
@@ -118,7 +158,7 @@ def rasecanje_text(caure: str, groups, stancna_mm, rows_long, max_d: str) -> str
         return ""
     caure = (caure or "").strip()
     head = f"Raseći na čaure {caure}" if caure else "Raseći"
-    max_d = (max_d or "").strip()
+    max_d = _mm(max_d)
     tail = f" (max. Ø{max_d}mm)" if max_d else ""
     return f"{head}, {' + '.join(parts)}{tail},"
 

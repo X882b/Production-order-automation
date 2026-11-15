@@ -6,7 +6,7 @@ import math
 import requests
 from dotenv import load_dotenv
 
-from PySide6.QtCore import Qt, QTimer, QDate, QUrl
+from PySide6.QtCore import Qt, QTimer, QDate, QUrl, QEvent, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton,
@@ -23,7 +23,9 @@ from formatting import (
 from order_text import (
     OPIS_DEFAULT, NAPOMENA_DEFAULT, napred_ide_text, alati_text,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
+    caure_text,
 )
+import alati_filter
 
 ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(ROOT / ".env")
@@ -82,9 +84,6 @@ class MainWindow(QMainWindow):
         self.k_rows_wide = None
         self.k_broj_zuba = None
 
-        # Tool live-search state
-        self._alati_rows = []
-
         # Field edits auto-filled by the šifra lookup -> the text it put there
         self._autofilled = {}
         # The ALATI line as last filled in automatically (from the chosen die
@@ -92,6 +91,8 @@ class MainWindow(QMainWindow):
         self._alati_auto = ""
         # The roll groups as last proposed; groups changed by hand are kept
         self._rolne_auto = []
+        # The unwinding line as last proposed; a line changed by hand is kept
+        self._odmotavanje_auto = ""
 
         # ---- Top title ----
         self.title_lbl = QLabel("NALOG ZA PROIZVODNJU —")
@@ -139,44 +140,27 @@ class MainWindow(QMainWindow):
         self.sifra_timer.timeout.connect(self.lookup_product_by_sifra)
         self.sifra_edit.textEdited.connect(lambda _: self.sifra_timer.start())
 
-        # ---- ALATI live search ----
-        self.alati_edit = QLineEdit()
-        self.alati_edit.setPlaceholderText("Pretraži alat / štancnu")
-        self.alati_edit.textEdited.connect(lambda _: self.alati_timer.start())
-        self.alati_edit.cursorPositionChanged.connect(self.show_alati_table)
+        # ---- ALATI: the chosen die, and a search field per column ----
+        self.alati_chosen = QLineEdit()
+        self.alati_chosen.setReadOnly(True)
+        self.alati_chosen.setPlaceholderText("(izaberite štancnu: pretraga ispod, dupli klik na red)")
 
-        self.alati_table = QTableWidget(0, 6)
-        self.alati_table.setHorizontalHeaderLabels([
-            "Oznaka štancne", "Oznaka proizvođača", "Dimenzija",
-            "Zuba", "Obim cilindra", "Raspored",
-        ])
-        self.alati_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.alati_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.alati_table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.alati_table.verticalHeader().setVisible(False)
-        self.alati_table.setAlternatingRowColors(True)
-        self.alati_table.setSortingEnabled(True)
-        self.alati_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.alati_table.setMaximumHeight(230)
-        self.alati_table.cellDoubleClicked.connect(self.on_alati_row_activated)
-        self.alati_table.hide()
-
-        self.alati_timer = QTimer(self)
-        self.alati_timer.setInterval(200)
-        self.alati_timer.setSingleShot(True)
-        self.alati_timer.timeout.connect(self.lookup_alati_live)
+        self.alati_search = AlatiSearch(collapsed=True)
+        self.alati_search.table.setFixedHeight(230)   # the scrolling form would squeeze it
+        self.alati_search.chosen.connect(self.apply_selected_alat)
 
         btn_expand_alati = QPushButton("Expand")
         btn_expand_alati.clicked.connect(self.on_expand_alati)
 
-        alati_search_row = QHBoxLayout()
-        alati_search_row.addWidget(self.alati_edit, 1)
-        alati_search_row.addWidget(btn_expand_alati, 0)
+        alati_chosen_row = QHBoxLayout()
+        alati_chosen_row.addWidget(self.alati_chosen, 1)
+        alati_chosen_row.addWidget(btn_expand_alati, 0)
 
         alati_layout = QVBoxLayout()
         alati_layout.setContentsMargins(0, 0, 0, 0)
-        alati_layout.addLayout(alati_search_row)
-        alati_layout.addWidget(self.alati_table)
+        alati_layout.setSpacing(4)
+        alati_layout.addLayout(alati_chosen_row)
+        alati_layout.addWidget(self.alati_search)
 
         alati_widget = QWidget()
         alati_widget.setLayout(alati_layout)
@@ -301,15 +285,22 @@ class MainWindow(QMainWindow):
         self.opis_edit.setFixedHeight(self.opis_edit.fontMetrics().lineSpacing() * 4 + 12)
 
         # ---- NAPOMENA: slitting into rolls, unwinding, the rest ----
-        self.caure_edit = QLineEdit()
-        self.caure_edit.setPlaceholderText("Ø45/Ø52/65 mm")
+        # Core: inner Ø / outer Ø / width; the form writes "Ø" and "mm" itself
+        self.caura_unutra_edit = QLineEdit()
+        self.caura_unutra_edit.setPlaceholderText("45")
+        self.caura_spolja_edit = QLineEdit()
+        self.caura_spolja_edit.setPlaceholderText("52")
+        self.caura_sirina_edit = QLineEdit()
+        self.caura_sirina_edit.setPlaceholderText("65")
+        for edit in (self.caura_unutra_edit, self.caura_spolja_edit, self.caura_sirina_edit):
+            edit.setFixedWidth(60)
+            edit.textChanged.connect(self.refresh_napomena_display)
         self.max_d_edit = QLineEdit()
         self.max_d_edit.setPlaceholderText("150")
         self.max_d_edit.setFixedWidth(60)
         self.kom_po_rolni_edit = QLineEdit()
         self.kom_po_rolni_edit.setPlaceholderText("1.000")
         self.kom_po_rolni_edit.setFixedWidth(100)
-        self.caure_edit.textChanged.connect(self.refresh_napomena_display)
         self.max_d_edit.textChanged.connect(self.refresh_napomena_display)
         self.kom_po_rolni_edit.textChanged.connect(self.refresh_napomena)
 
@@ -333,7 +324,13 @@ class MainWindow(QMainWindow):
         self.napomena_display = QPlainTextEdit()
         self.napomena_display.setReadOnly(True)
         self.napomena_display.setPlaceholderText("(unesite kom/rolna...)")
-        self.napomena_display.setFixedHeight(self.napomena_display.fontMetrics().lineSpacing() * 4 + 12)
+        self.napomena_display.setFixedHeight(self.napomena_display.fontMetrics().lineSpacing() * 3 + 12)
+
+        # Proposed from NAPRED IDE with the letter at the other end of the name
+        self.odmotavanje_edit = QLineEdit()
+        self.odmotavanje_edit.setPlaceholderText(
+            "(Pri odmotavanju gotove rolnice napred ide slovo ... – popunjava se iz NAPRED IDE)"
+        )
 
         self.napomena_ostalo_edit = QPlainTextEdit()
         self.napomena_ostalo_edit.setPlainText(NAPOMENA_DEFAULT)
@@ -342,8 +339,14 @@ class MainWindow(QMainWindow):
         )
 
         caure_row = QHBoxLayout()
-        caure_row.addWidget(QLabel("čaure"))
-        caure_row.addWidget(self.caure_edit, 1)
+        caure_row.addWidget(QLabel("čaure Ø"))
+        caure_row.addWidget(self.caura_unutra_edit)
+        caure_row.addWidget(QLabel("/ Ø"))
+        caure_row.addWidget(self.caura_spolja_edit)
+        caure_row.addWidget(QLabel("/"))
+        caure_row.addWidget(self.caura_sirina_edit)
+        caure_row.addWidget(QLabel("mm"))
+        caure_row.addStretch()
         caure_row.addWidget(QLabel("max. Ø"))
         caure_row.addWidget(self.max_d_edit)
         caure_row.addWidget(QLabel("mm"))
@@ -362,6 +365,7 @@ class MainWindow(QMainWindow):
         napomena_layout.addLayout(rolne_row)
         napomena_layout.addWidget(self.rolne_table)
         napomena_layout.addWidget(self.napomena_display)
+        napomena_layout.addWidget(self.odmotavanje_edit)
         napomena_layout.addWidget(self.napomena_ostalo_edit)
         napomena_layout.addStretch()   # spare height goes below, not between the rows
 
@@ -591,72 +595,12 @@ class MainWindow(QMainWindow):
         self.recompute_kolicina_display()
 
     # ------------------------------------------------------------------
-    # ALATI live search
+    # ALATI
     # ------------------------------------------------------------------
-
-    def lookup_alati_live(self):
-        q = self.alati_edit.text().strip()
-        try:
-            rows = get_json("/lookup/tools", {"q": q, "limit": 5000})
-            self._alati_rows = rows
-            self.populate_alati_table(rows)
-            self.alati_table.show()
-        except Exception as e:
-            self.alati_table.hide()
-            QMessageBox.critical(self, "ALATI error", str(e))
-
-    def populate_alati_table(self, rows):
-        self._alati_rows = rows
-        self.alati_table.setSortingEnabled(False)
-        self.alati_table.setRowCount(len(rows))
-
-        for i, row in enumerate(rows):
-            sir  = row.get("dimenzija_sirina_mm")
-            vis  = row.get("dimenzija_visina_mm")
-            if sir is not None and vis is not None:
-                dim = f"{float(sir):g} x {float(vis):g} mm"
-            elif sir is not None:
-                dim = f"{float(sir):g} mm"
-            elif vis is not None:
-                dim = f"{float(vis):g} mm"
-            else:
-                dim = ""
-
-            obim = row.get("obim_cilindra_mm")
-            values = [
-                row.get("oznaka_stancne") or "",
-                row.get("oznaka_proizvodjaca") or "",
-                dim,
-                row.get("broj_zuba") or "",
-                f"{float(obim):g}" if obim is not None else "",
-                row.get("raspored") or "",
-            ]
-
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                item.setData(Qt.UserRole, i)   # store original index for post-sort lookup
-                self.alati_table.setItem(i, col, item)
-
-        self.alati_table.setSortingEnabled(True)
-
-    def show_alati_table(self):
-        self.alati_table.show()
-        if not self._alati_rows:
-            self.lookup_alati_live()
-
-    def on_alati_row_activated(self, row, _column):
-        # Must use UserRole data – visual row != original index after sorting
-        item = self.alati_table.item(row, 0)
-        if not item:
-            return
-        original_index = item.data(Qt.UserRole)
-        if original_index is None or int(original_index) >= len(self._alati_rows):
-            return
-        self.apply_selected_alat(self._alati_rows[int(original_index)])
 
     def on_expand_alati(self):
         try:
-            rows = get_json("/lookup/tools", {"q": "", "limit": 5000})   # dialog filters locally: needs all
+            rows = get_json("/lookup/tools", {"q": "", "limit": 5000})
             dlg = AlatiDialog(self, rows)
             if dlg.exec() == QDialog.Accepted and dlg.selected_row_data:
                 self.apply_selected_alat(dlg.selected_row_data)
@@ -665,21 +609,16 @@ class MainWindow(QMainWindow):
 
     def apply_selected_alat(self, best):
         self.selected_tool_id = best.get("id")
-        self.alati_edit.setText(best.get("oznaka_stancne") or "")
-        sir = best.get("dimenzija_sirina_mm")
-        vis = best.get("dimenzija_visina_mm")
-        if sir is not None and vis is not None:
-            self.dim_edit.setText(f"{float(sir):g} x {float(vis):g} mm")
-        elif sir is not None:
-            self.dim_edit.setText(f"{float(sir):g} mm")
-        elif vis is not None:
-            self.dim_edit.setText(f"{float(vis):g} mm")
+        self.alati_chosen.setText(alati_filter.summary(best))
+        dim = alati_filter.dimenzija_text(best)
+        if dim:
+            self.dim_edit.setText(dim)
         self.k_stancna_mm  = float(best["obim_cilindra_mm"]) if best.get("obim_cilindra_mm") is not None else None
         self.k_rows_long   = best.get("rows_long")
         self.k_rows_wide   = best.get("rows_wide")
         self.k_broj_zuba   = best.get("broj_zuba")
         self.recompute_kolicina_display()
-        self.alati_table.hide()
+        self.alati_search.table.hide()
 
         # The order's ALATI line follows the chosen die, unless typed by hand
         if self.alati_nalog_edit.text() in ("", self._alati_auto):
@@ -780,7 +719,12 @@ class MainWindow(QMainWindow):
         self.napred_display.setText(napred_ide_text(
             self.napred_slovo_edit.text(), self.napred_naziv_edit.text()
         ))
-        self.refresh_napomena_display()   # its unwinding line uses them too
+
+        # NAPOMENA's unwinding line follows, unless it was changed by hand
+        proposed = odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text())
+        if self.odmotavanje_edit.text() in ("", self._odmotavanje_auto):
+            self.odmotavanje_edit.setText(proposed)
+        self._odmotavanje_auto = proposed
 
     # ------------------------------------------------------------------
     # NAPOMENA
@@ -853,14 +797,15 @@ class MainWindow(QMainWindow):
             self.rolne_table.item(r, 2).setText("" if otk is None else str(otk))
         self.rolne_table.blockSignals(False)
 
-        self.napomena_display.setPlainText(napomena_text(
-            self._rasecanje_line(),
-            odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text()),
-        ))
+        self.napomena_display.setPlainText(self._rasecanje_line())
 
     def _rasecanje_line(self):
+        caure = caure_text(
+            self.caura_unutra_edit.text(), self.caura_spolja_edit.text(),
+            self.caura_sirina_edit.text(),
+        )
         return rasecanje_text(
-            self.caure_edit.text(), self._roll_groups(),
+            caure, self._roll_groups(),
             self.k_stancna_mm, self.k_rows_long, self.max_d_edit.text(),
         )
 
@@ -868,7 +813,7 @@ class MainWindow(QMainWindow):
         """NAPOMENA as the order has it: slitting, unwinding, then the rest."""
         return napomena_text(
             self._rasecanje_line(),
-            odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text()),
+            self.odmotavanje_edit.text(),
             self.napomena_ostalo_edit.toPlainText(),
         )
 
@@ -968,7 +913,142 @@ class MainWindow(QMainWindow):
 
 
 # ---------------------------------------------------------------------------
-# AlatiDialog – expanded tool search
+# AlatiSearch – the die catalogue with a search field per column
+# ---------------------------------------------------------------------------
+
+class _NumberItem(QTableWidgetItem):
+    """A table cell that sorts as a number."""
+
+    def __lt__(self, other):
+        try:
+            return float(self.text()) < float(other.text())
+        except ValueError:
+            return self.text() < other.text()
+
+
+class AlatiSearch(QWidget):
+    """One search field per column above the table of dies; a die must fit
+    every field that is filled in. Double-clicking a die emits `chosen`.
+
+    collapsed: the table stays hidden until a field is clicked or typed in,
+    and hides again once a die is chosen or Esc is pressed (for the form,
+    where the table would take too much room). The catalogue is loaded on
+    first use unless `rows` is given.
+    """
+
+    chosen = Signal(dict)
+
+    # Relative column widths, in the order of alati_filter.COLUMNS: the two
+    # die codes need the most room
+    _SHARES = (4, 5, 2, 2, 2, 3, 2)
+
+    def __init__(self, parent=None, rows=None, collapsed=False):
+        super().__init__(parent)
+        self._rows = None if rows is None else list(rows)
+        self._shown = []
+        self._collapsed = collapsed
+
+        # The fields are placed by hand (see resizeEvent), each above its column
+        self.filters = {}   # row key -> its search field
+        self._filter_bar = QWidget()
+        self._filter_bar.setFixedHeight(QLineEdit().sizeHint().height())
+        for header, key, _kind in alati_filter.COLUMNS:
+            edit = QLineEdit(self._filter_bar)
+            edit.setPlaceholderText(header)
+            edit.setClearButtonEnabled(True)
+            edit.textChanged.connect(lambda _: self.filter_timer.start())
+            edit.installEventFilter(self)
+            self.filters[key] = edit
+
+        # Refill the table once typing pauses, not on every key
+        self.filter_timer = QTimer(self)
+        self.filter_timer.setInterval(150)
+        self.filter_timer.setSingleShot(True)
+        self.filter_timer.timeout.connect(self.apply_filters)
+
+        self.table = QTableWidget(0, len(alati_filter.COLUMNS))
+        self.table.setHorizontalHeaderLabels([header for header, _key, _kind in alati_filter.COLUMNS])
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setAlternatingRowColors(True)
+        self.table.setSortingEnabled(True)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.table.horizontalHeader().setStretchLastSection(True)
+        self.table.cellDoubleClicked.connect(self._on_double_click)
+
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
+        layout.addWidget(self._filter_bar)
+        layout.addWidget(self.table)
+
+        if collapsed:
+            self.table.hide()
+        else:
+            self.apply_filters()
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        # Share the width between the columns and put each field above its own
+        frame = self.table.frameWidth()
+        room = max(self.width() - 2 * frame - self.table.verticalScrollBar().sizeHint().width(), 0)
+        x = frame
+        edits = list(self.filters.values())
+        for col, (edit, share) in enumerate(zip(edits, self._SHARES)):
+            width = room * share // sum(self._SHARES)
+            if edit is edits[-1]:
+                width = frame + room - x   # the last one takes what rounding left
+            self.table.setColumnWidth(col, width)
+            edit.setGeometry(x, 0, width, self._filter_bar.height())
+            x += width
+
+    def eventFilter(self, obj, event):
+        if self._collapsed:
+            # A click opens the table; tabbing through the form does not
+            if event.type() == QEvent.MouseButtonPress and self.table.isHidden():
+                self.apply_filters()
+            elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
+                self.table.hide()
+        return super().eventFilter(obj, event)
+
+    def apply_filters(self):
+        """Show the dies that fit the search fields (loading them if needed)."""
+        if self._rows is None:
+            try:
+                self._rows = get_json("/lookup/tools", {"q": "", "limit": 5000})
+            except Exception as e:
+                QMessageBox.critical(self, "ALATI error", str(e))
+                return
+        typed = {key: edit.text() for key, edit in self.filters.items()}
+        self._shown = [row for row in self._rows if alati_filter.matches(row, typed)]
+
+        self.table.setSortingEnabled(False)
+        self.table.setRowCount(len(self._shown))
+        for i, row in enumerate(self._shown):
+            for col, (_header, key, kind) in enumerate(alati_filter.COLUMNS):
+                cell = _NumberItem if kind == "number" else QTableWidgetItem
+                item = cell(alati_filter.cell_text(row, key))
+                item.setData(Qt.UserRole, i)   # original index: rows move when sorted
+                self.table.setItem(i, col, item)
+        self.table.setSortingEnabled(True)
+        self.table.show()
+
+    def _on_double_click(self, row, _column):
+        item = self.table.item(row, 0)
+        if not item:
+            return
+        index = item.data(Qt.UserRole)
+        if index is None or int(index) >= len(self._shown):
+            return
+        if self._collapsed:
+            self.table.hide()
+        self.chosen.emit(self._shown[int(index)])
+
+
+# ---------------------------------------------------------------------------
+# AlatiDialog – the die search in a large window
 # ---------------------------------------------------------------------------
 
 class AlatiDialog(QDialog):
@@ -977,102 +1057,25 @@ class AlatiDialog(QDialog):
         self.setWindowTitle("ALATI search")
         self.resize(1100, 600)
 
-        self.all_rows = rows or []
-        self.rows = list(self.all_rows)
         self.selected_row_data = None
 
-        self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Pretraži alat...")
-        self.search_edit.textChanged.connect(self.filter_rows)
+        self.search = AlatiSearch(self, rows=rows or [])
+        self.search.chosen.connect(self._on_chosen)
 
         btn_close = QPushButton("Close")
         btn_close.clicked.connect(self.reject)
 
-        top_row = QHBoxLayout()
-        top_row.addWidget(self.search_edit, 1)
-        top_row.addWidget(btn_close)
-
-        self.table = QTableWidget(0, 6)
-        self.table.setHorizontalHeaderLabels([
-            "Oznaka štancne", "Oznaka proizvođača", "Dimenzija",
-            "Zuba", "Obim cilindra", "Raspored",
-        ])
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.verticalHeader().setVisible(False)
-        self.table.setAlternatingRowColors(True)
-        self.table.setSortingEnabled(True)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.cellDoubleClicked.connect(self.on_row_double_clicked)
-
-        self.populate()
+        bottom_row = QHBoxLayout()
+        bottom_row.addStretch()
+        bottom_row.addWidget(btn_close)
 
         layout = QVBoxLayout()
-        layout.addLayout(top_row)
-        layout.addWidget(self.table)
+        layout.addWidget(self.search)
+        layout.addLayout(bottom_row)
         self.setLayout(layout)
 
-    def filter_rows(self):
-        q = self.search_edit.text().strip().lower()
-        if not q:
-            self.rows = list(self.all_rows)
-        else:
-            self.rows = [
-                row for row in self.all_rows
-                if q in " ".join([
-                    str(row.get("oznaka_stancne") or ""),
-                    str(row.get("oznaka_proizvodjaca") or ""),
-                    str(row.get("dimenzija_sirina_mm") or ""),
-                    str(row.get("dimenzija_visina_mm") or ""),
-                    str(row.get("broj_zuba") or ""),
-                    str(row.get("obim_cilindra_mm") or ""),
-                    str(row.get("raspored") or ""),
-                ]).lower()
-            ]
-        self.populate()
-
-    def populate(self):
-        self.table.setSortingEnabled(False)
-        self.table.setRowCount(len(self.rows))
-
-        for i, row in enumerate(self.rows):
-            sir  = row.get("dimenzija_sirina_mm")
-            vis  = row.get("dimenzija_visina_mm")
-            if sir is not None and vis is not None:
-                dim = f"{float(sir):g} x {float(vis):g} mm"
-            elif sir is not None:
-                dim = f"{float(sir):g} mm"
-            elif vis is not None:
-                dim = f"{float(vis):g} mm"
-            else:
-                dim = ""
-
-            obim = row.get("obim_cilindra_mm")
-            values = [
-                row.get("oznaka_stancne") or "",
-                row.get("oznaka_proizvodjaca") or "",
-                dim,
-                row.get("broj_zuba") or "",
-                f"{float(obim):g}" if obim is not None else "",
-                row.get("raspored") or "",
-            ]
-
-            for col, value in enumerate(values):
-                item = QTableWidgetItem(str(value))
-                item.setData(Qt.UserRole, i)
-                self.table.setItem(i, col, item)
-
-        self.table.setSortingEnabled(True)
-
-    def on_row_double_clicked(self, row, _column):
-        item = self.table.item(row, 0)
-        if not item:
-            return
-        original_index = item.data(Qt.UserRole)
-        if original_index is None or int(original_index) >= len(self.rows):
-            return
-        self.selected_row_data = self.rows[int(original_index)]
+    def _on_chosen(self, row):
+        self.selected_row_data = row
         self.accept()
 
 

@@ -2,8 +2,9 @@
 import pytest
 
 from order_text import (
-    NAPOMENA_DEFAULT, OPIS_DEFAULT, alati_text, napomena_text, napred_ide_text,
-    odmotavanje_text, otkucaji, rasecanje_text, rolne_word, split_rolls,
+    NAPOMENA_DEFAULT, OPIS_DEFAULT, alati_text, caure_text, napomena_text,
+    napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, rasecanje_text,
+    rolne_word, split_rolls,
 )
 
 
@@ -28,10 +29,33 @@ def test_napred_ide_is_empty_until_both_are_given(slovo, naziv):
     assert odmotavanje_text(slovo, naziv) == ""
 
 
-def test_odmotavanje_sentence():
+@pytest.mark.parametrize("slovo, naziv, expected", [
+    ("D", "Demo", "o"),             # first letter at the press -> last when unwinding
+    ("o", "Demo", "D"),             # and the other way round
+    ("d", "Demo", "o"),             # any case; the answer is written as in the name
+    ("O", "Demo", "D"),
+    ("D", "Demo ...", "o"),         # dots after the name are not its last letter
+    ("k", "Demo sok", "D"),
+    ("A", "Ana", "a"),              # same letter at both ends: as written wins
+    ("a", "Ana", "A"),
+    ("e", "Demo", ""),              # at neither end: nothing to propose
+    ("De", "Demo", ""),
+    ("", "Demo", ""),
+    ("D", "", ""),
+    (None, None, ""),
+])
+def test_obrnuto_slovo(slovo, naziv, expected):
+    assert obrnuto_slovo(slovo, naziv) == expected
+
+
+def test_odmotavanje_sentence_names_the_other_end_of_the_name():
     assert odmotavanje_text("D", "Demo") == (
-        "Pri odmotavanju gotove rolnice napred ide slovo „D“ u nazivu „Demo“."
+        "Pri odmotavanju gotove rolnice napred ide slovo „o“ u nazivu „Demo“."
     )
+
+
+def test_odmotavanje_is_empty_when_the_letter_is_at_neither_end():
+    assert odmotavanje_text("e", "Demo") == ""
 
 
 @pytest.mark.parametrize("oznaka, zuba, expected", [
@@ -99,13 +123,35 @@ def test_split_rolls(total, per_roll, lanes, expected):
     assert split_rolls(total, per_roll, lanes) == expected
 
 
+@pytest.mark.parametrize("unutra, spolja, sirina, expected", [
+    ("45", "52", "65", "Ø45/Ø52/65 mm"),
+    (" 40 ", "45", "90", "Ø40/Ø45/90 mm"),
+    ("Ø45", "ø52", "65 mm", "Ø45/Ø52/65 mm"),   # typed with Ø or mm anyway
+    ("76", "", "", "Ø76 mm"),
+    ("76", "", "65", "Ø76/65 mm"),
+    ("", "", "", ""),
+    (None, None, None, ""),
+])
+def test_caure_text(unutra, spolja, sirina, expected):
+    assert caure_text(unutra, spolja, sirina) == expected
+
+
 def test_rasecanje_line_as_in_the_order_template():
-    line = rasecanje_text("Ø45/Ø52/65 mm", [(99, 1000), (3, 335)], 295.275, 2, "150")
+    line = rasecanje_text(caure_text("45", "52", "65"), [(99, 1000), (3, 335)], 295.275, 2, "150")
 
     assert line == (
         "Raseći na čaure Ø45/Ø52/65 mm, 99 rolni x 1.000 kom/rolna-1476 otkucaja/rolna"
         " + 3 rolne x 335 kom/rolna-495 otkucaja/rolna (max. Ø150mm),"
     )
+
+
+def test_rasecanje_line_for_two_lanes_and_four_labels_around():
+    # 2.450 kom on a Z-81 die (257,175 mm), 2 lanes, 4 around: 64,29 mm per label
+    groups = split_rolls(2450, 1225, 2)
+    line = rasecanje_text(caure_text("40", "45", "90"), groups, 257.175, 4, "Ø300 mm")
+
+    assert groups == [(2, 1225)]
+    assert line == "Raseći na čaure Ø40/Ø45/90 mm, 2 rolne x 1.225 kom/rolna-788 otkucaja/rolna (max. Ø300mm),"
 
 
 def test_rasecanje_line_without_die_cores_or_max():
