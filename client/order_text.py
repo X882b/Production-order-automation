@@ -34,6 +34,24 @@ def _datum(iso: str) -> str:
         return str(iso or "")
 
 
+def ranije_serije(serije: list[dict], doc_number) -> list[str]:
+    """The dates of the product's production runs before this order's own.
+
+    serije are the product's rows from /series ({"datum": ISO date,
+    "doc_number": the order that run was for, or None}). An order with no
+    run of its own yet comes after all of them; a saved one has its own run
+    among them, and that run and later ones are not "earlier runs".
+    """
+    own = next(
+        (r for r in serije if doc_number is not None and r.get("doc_number") == doc_number),
+        None,
+    )
+    return sorted(
+        r["datum"] for r in serije
+        if r is not own and (own is None or r["datum"] < own["datum"])
+    )
+
+
 def stampa_text(serije: list[str], probni_uzorak: str) -> str:
     """The 'Štampa prema pripremi' line, from ISO dates.
 

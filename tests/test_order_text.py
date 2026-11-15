@@ -4,9 +4,31 @@ import pytest
 from order_text import (
     KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
     alati_text, caure_text, napomena_text, napred_ide_text, obrnuto_slovo,
-    odmotavanje_text, otkucaji, rasecanje_text, rolne_word, split_rolls,
-    stampa_text,
+    odmotavanje_text, otkucaji, ranije_serije, rasecanje_text, rolne_word,
+    split_rolls, stampa_text,
 )
+
+RUNS = [
+    {"datum": "2026-08-12", "doc_number": 6270},
+    {"datum": "2026-11-15", "doc_number": 6276},
+    {"datum": "2026-04-04", "doc_number": None},    # a date added by hand
+    {"datum": "2026-12-29", "doc_number": 6280},
+]
+
+
+@pytest.mark.parametrize("doc_number, expected", [
+    (None, ["2026-04-04", "2026-08-12", "2026-11-15", "2026-12-29"]),   # no number yet
+    (6290, ["2026-04-04", "2026-08-12", "2026-11-15", "2026-12-29"]),   # a new order: all are earlier
+    (6276, ["2026-04-04", "2026-08-12"]),      # a saved order: not its own run, nor later ones
+    (6270, ["2026-04-04"]),
+    (6280, ["2026-04-04", "2026-08-12", "2026-11-15"]),
+])
+def test_ranije_serije(doc_number, expected):
+    assert ranije_serije(RUNS, doc_number) == expected
+
+
+def test_ranije_serije_of_a_product_without_runs():
+    assert ranije_serije([], 6276) == []
 
 
 def test_stampa_line_for_a_first_run_names_the_proof():

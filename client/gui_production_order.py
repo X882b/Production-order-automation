@@ -23,7 +23,7 @@ from formatting import (
 )
 from order_text import (
     OPIS_DEFAULT, NAPOMENA_DEFAULT, KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT,
-    napred_ide_text, alati_text, stampa_text,
+    napred_ide_text, alati_text, stampa_text, ranije_serije,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
     caure_text,
 )
@@ -228,7 +228,7 @@ class MainWindow(QMainWindow):
         probni_layout.addStretch()
 
         # Proposed from the product's earlier runs; any text can be typed instead
-        self.stampa_edit = ProposedText(lines=2, placeholder="(Štampa prema pripremi ...)")
+        self.stampa_edit = ProposedText(lines=2, placeholder="(unesite šifru...)")
 
         btn_edit_series = QPushButton("Uredi serije...")
         btn_add_date    = QPushButton("Dodaj datum serije")
@@ -695,11 +695,7 @@ class MainWindow(QMainWindow):
 
     def refresh_stampa_display(self):
         """Propose the Štampa line from the product's earlier runs."""
-        # This order's own run is not one of its earlier runs
-        serije = [
-            r["datum"] for r in self.series_dates
-            if self.doc_number is None or r.get("doc_number") != self.doc_number
-        ]
+        serije = ranije_serije(self.series_dates, self.doc_number)
         self.probni_datum_row.setVisible(not serije)
         self.stampa_edit.propose(stampa_text(
             serije, self.probni_datum_edit.date().toString(Qt.ISODate)
