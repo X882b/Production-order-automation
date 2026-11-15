@@ -683,17 +683,19 @@ class MainWindow(QMainWindow):
     # Štampa prema pripremi / series dates
     # ------------------------------------------------------------------
 
-    def load_series(self, sifra: str):
-        if not sifra:
-            self.series_dates = []
-            self.refresh_stampa_display()
-            return
-        try:
-            self.series_dates = get_json("/series", {"sifra": sifra})
-        except Exception as e:
-            print("Series load error:", e)
-            self.series_dates = []
+    def load_series(self, sifra: str) -> bool:
+        """Read the product's runs and propose the Štampa line from them.
+        False when they could not be read (the form then has none)."""
+        loaded = True
+        self.series_dates = []
+        if sifra:
+            try:
+                self.series_dates = get_json("/series", {"sifra": sifra})
+            except Exception as e:
+                print("Series load error:", e)
+                loaded = False
         self.refresh_stampa_display()
+        return loaded
 
     def refresh_stampa_display(self):
         """Propose the Štampa line from the product's earlier runs."""
@@ -827,17 +829,21 @@ class MainWindow(QMainWindow):
         d = dlg.get_date()
         try:
             post_json("/series", {"sifra": sifra, "datum": d.isoformat()})
-            self.load_series(sifra)
         except Exception as e:
             QMessageBox.critical(self, "Greška", str(e))
+            return
+        if not self.load_series(sifra):
+            QMessageBox.critical(
+                self, "Greška",
+                "Datum je sačuvan, ali serije nisu ponovo učitane. Otvorite „Uredi serije...“.",
+            )
 
     def on_edit_series(self):
         sifra = self.sifra_edit.text().strip()
         if not sifra:
             QMessageBox.warning(self, "Greška", "Unesite šifru pre uređivanja serija.")
             return
-        dlg = SeriesDialog(self, sifra=sifra, dates=self.series_dates)
-        dlg.exec()
+        SeriesDialog(self, sifra=sifra).exec()   # reads the runs from the database itself
         self.load_series(sifra)
 
     # ------------------------------------------------------------------
@@ -1895,12 +1901,12 @@ class KolicinaDialog(QDialog):
 # ---------------------------------------------------------------------------
 
 class SeriesDialog(QDialog):
-    def __init__(self, parent=None, sifra="", dates=None):
+    def __init__(self, parent=None, sifra=""):
         super().__init__(parent)
         self.setWindowTitle(f"Serije – {sifra}")
         self.resize(520, 350)
         self.sifra = sifra
-        self.dates = list(dates or [])
+        self.dates = []
 
         self.table = QTableWidget(0, 3)
         self.table.setHorizontalHeaderLabels(["Datum", "Nalog br.", "Napomena"])
@@ -1929,6 +1935,15 @@ class SeriesDialog(QDialog):
         lay.addLayout(btns)
         self.setLayout(lay)
 
+        self.reload()
+
+    def reload(self):
+        """Show the product's runs as they are in the database right now."""
+        try:
+            self.dates = get_json("/series", {"sifra": self.sifra})
+        except Exception as e:
+            self.dates = []
+            QMessageBox.critical(self, "Greška", f"Serije nisu učitane:\n{e}")
         self.populate()
 
     def populate(self):
@@ -1952,10 +1967,10 @@ class SeriesDialog(QDialog):
         d = dlg.get_date()
         try:
             post_json("/series", {"sifra": self.sifra, "datum": d.isoformat()})
-            self.dates = get_json("/series", {"sifra": self.sifra})
-            self.populate()
         except Exception as e:
             QMessageBox.critical(self, "Greška", str(e))
+            return
+        self.reload()
 
     def on_remove(self):
         row = self.table.currentRow()
@@ -1973,10 +1988,10 @@ class SeriesDialog(QDialog):
         try:
             r = requests.delete(url(f"/series/{entry_id}"), headers=headers(), timeout=5)
             r.raise_for_status()
-            self.dates = get_json("/series", {"sifra": self.sifra})
-            self.populate()
         except Exception as e:
             QMessageBox.critical(self, "Greška", str(e))
+            return
+        self.reload()
 
 
 # ---------------------------------------------------------------------------
