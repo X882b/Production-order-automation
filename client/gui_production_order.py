@@ -1,3 +1,4 @@
+import copy
 import os
 import sys
 from pathlib import Path
@@ -13,7 +14,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QMessageBox,
     QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
-    QHeaderView, QPlainTextEdit, QScrollArea
+    QHeaderView, QPlainTextEdit, QScrollArea, QInputDialog
 )
 
 from formatting import (
@@ -21,7 +22,8 @@ from formatting import (
     fmt_cylinder_from_zuba, _fmt_cylinder,
 )
 from order_text import (
-    OPIS_DEFAULT, NAPOMENA_DEFAULT, napred_ide_text, alati_text,
+    OPIS_DEFAULT, NAPOMENA_DEFAULT, KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT,
+    napred_ide_text, alati_text, stampa_text,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
     caure_text,
 )
@@ -69,6 +71,7 @@ class MainWindow(QMainWindow):
         self.selected_customer_id = None
         self.selected_material_id = None
         self.selected_tool_id = None
+        self.chosen_tool = None   # the chosen die's catalogue row
 
         self.color_rows = []
         self.series_dates = []
@@ -86,13 +89,10 @@ class MainWindow(QMainWindow):
 
         # Field edits auto-filled by the šifra lookup -> the text it put there
         self._autofilled = {}
-        # The ALATI line as last filled in automatically (from the chosen die
-        # or a past order); a line typed by hand is not replaced
-        self._alati_auto = ""
         # The roll groups as last proposed; groups changed by hand are kept
         self._rolne_auto = []
-        # The unwinding line as last proposed; a line changed by hand is kept
-        self._odmotavanje_auto = ""
+        # The form as last saved or opened, to notice unsaved changes
+        self._saved_state = None
 
         # ---- Top title ----
         self.title_lbl = QLabel("NALOG ZA PROIZVODNJU —")
@@ -109,8 +109,13 @@ class MainWindow(QMainWindow):
         btn_search = QPushButton("Pretraži naloge...")
         btn_search.clicked.connect(self.on_search_nalozi)
 
+        btn_open = QPushButton("Otvori nalog...")
+        btn_open.setToolTip("Otvori nalog u formi onako kako je sačuvan")
+        btn_open.clicked.connect(self.on_open_nalog)
+
         top_btns = QHBoxLayout()
         top_btns.addWidget(btn_search)
+        top_btns.addWidget(btn_open)
         top_btns.addStretch()
         top_btns.addWidget(btn_new)
         top_btns.addWidget(btn_save)
@@ -222,9 +227,8 @@ class MainWindow(QMainWindow):
         probni_layout.addWidget(self.probni_datum_edit)
         probni_layout.addStretch()
 
-        self.stampa_display = QLineEdit()
-        self.stampa_display.setReadOnly(True)
-        self.stampa_display.setPlaceholderText("(unesite šifru...)")
+        # Proposed from the product's earlier runs; any text can be typed instead
+        self.stampa_edit = ProposedText(lines=2, placeholder="(Štampa prema pripremi ...)")
 
         btn_edit_series = QPushButton("Uredi serije...")
         btn_add_date    = QPushButton("Dodaj datum serije")
@@ -240,7 +244,7 @@ class MainWindow(QMainWindow):
         stampa_layout.setContentsMargins(0, 0, 0, 0)
         stampa_layout.setSpacing(4)
         stampa_layout.addWidget(self.probni_datum_row)
-        stampa_layout.addWidget(self.stampa_display)
+        stampa_layout.addWidget(self.stampa_edit)
         stampa_layout.addLayout(stampa_btns)
 
         stampa_widget = QWidget()
@@ -275,9 +279,8 @@ class MainWindow(QMainWindow):
         napred_widget = QWidget()
         napred_widget.setLayout(napred_layout)
 
-        # ---- ALATI line as the order prints it (filled from the chosen die) ----
-        self.alati_nalog_edit = QLineEdit()
-        self.alati_nalog_edit.setPlaceholderText("štancna oznake ..., Z-...")
+        # ---- ALATI line as the order prints it (proposed from the chosen die) ----
+        self.alati_nalog_edit = ProposedText(placeholder="štancna oznake ..., Z-...")
 
         # ---- OPIS ----
         self.opis_edit = QPlainTextEdit()
@@ -295,11 +298,9 @@ class MainWindow(QMainWindow):
         for edit in (self.caura_unutra_edit, self.caura_spolja_edit, self.caura_sirina_edit):
             edit.setFixedWidth(60)
             edit.textChanged.connect(self.refresh_napomena_display)
-        self.max_d_edit = QLineEdit()
-        self.max_d_edit.setPlaceholderText("150")
+        self.max_d_edit = QLineEdit(MAX_D_DEFAULT)
         self.max_d_edit.setFixedWidth(60)
-        self.kom_po_rolni_edit = QLineEdit()
-        self.kom_po_rolni_edit.setPlaceholderText("1.000")
+        self.kom_po_rolni_edit = QLineEdit(KOM_PO_ROLNI_DEFAULT)
         self.kom_po_rolni_edit.setFixedWidth(100)
         self.max_d_edit.textChanged.connect(self.refresh_napomena_display)
         self.kom_po_rolni_edit.textChanged.connect(self.refresh_napomena)
@@ -321,15 +322,12 @@ class MainWindow(QMainWindow):
         btn_add_group.clicked.connect(self.on_add_roll_group)
         btn_remove_group.clicked.connect(self.on_remove_roll_group)
 
-        self.napomena_display = QPlainTextEdit()
-        self.napomena_display.setReadOnly(True)
-        self.napomena_display.setPlaceholderText("(unesite kom/rolna...)")
-        self.napomena_display.setFixedHeight(self.napomena_display.fontMetrics().lineSpacing() * 3 + 12)
+        # The slitting line, proposed from the fields and roll groups above
+        self.rasecanje_edit = ProposedText(lines=3, placeholder="(Raseći na čaure ...)")
 
         # Proposed from NAPRED IDE with the letter at the other end of the name
-        self.odmotavanje_edit = QLineEdit()
-        self.odmotavanje_edit.setPlaceholderText(
-            "(Pri odmotavanju gotove rolnice napred ide slovo ... – popunjava se iz NAPRED IDE)"
+        self.odmotavanje_edit = ProposedText(
+            placeholder="(Pri odmotavanju gotove rolnice napred ide slovo ...)"
         )
 
         self.napomena_ostalo_edit = QPlainTextEdit()
@@ -364,7 +362,7 @@ class MainWindow(QMainWindow):
         napomena_layout.addLayout(caure_row)
         napomena_layout.addLayout(rolne_row)
         napomena_layout.addWidget(self.rolne_table)
-        napomena_layout.addWidget(self.napomena_display)
+        napomena_layout.addWidget(self.rasecanje_edit)
         napomena_layout.addWidget(self.odmotavanje_edit)
         napomena_layout.addWidget(self.napomena_ostalo_edit)
         napomena_layout.addStretch()   # spare height goes below, not between the rows
@@ -411,6 +409,7 @@ class MainWindow(QMainWindow):
 
         self.resize(820, 760)
         self.load_machines()
+        self._saved_state = self.form_state()
 
     # ------------------------------------------------------------------
     # Machine dropdown
@@ -446,6 +445,7 @@ class MainWindow(QMainWindow):
             self.doc_number = num
             self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
             self.rok_edit.setDate(QDate.currentDate().addDays(7))
+            self.refresh_stampa_display()   # which runs count as earlier depends on the order
         except Exception as e:
             QMessageBox.critical(self, "Reserve number error", str(e))
 
@@ -496,7 +496,10 @@ class MainWindow(QMainWindow):
     def on_search_nalozi(self):
         dlg = NaloziDialog(self)
         if dlg.exec() == QDialog.Accepted and dlg.selected_row_data:
-            self.apply_nalog(dlg.selected_row_data)
+            if dlg.open_in_form:
+                self.open_document(dlg.selected_row_data.get("broj_naloga"))
+            else:
+                self.apply_nalog(dlg.selected_row_data)
 
     def apply_nalog(self, hit):
         """Prefill the form from a past order, for a repeat job."""
@@ -511,8 +514,7 @@ class MainWindow(QMainWindow):
         self.narucilac_edit.setText(hit.get("narucilac") or "")
         # The past order's ALATI line as it was printed; choosing a die
         # afterwards replaces it
-        self._alati_auto = hit.get("alati") or ""
-        self.alati_nalog_edit.setText(self._alati_auto)
+        self.alati_nalog_edit.propose(hit.get("alati") or "", force=True)
         self._autofilled = {}   # the order's values are not from the catalogue
         # An exactly matching catalogue product supplies customer/material IDs
         # (and its non-empty fields); series dates are loaded either way
@@ -607,7 +609,13 @@ class MainWindow(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "ALATI error", str(e))
 
+    def _alati_proposal(self) -> str:
+        """The order's ALATI line for the chosen die; empty without one."""
+        tool = self.chosen_tool or {}
+        return alati_text(tool.get("oznaka_stancne") or "", self.k_broj_zuba)
+
     def apply_selected_alat(self, best):
+        self.chosen_tool = best
         self.selected_tool_id = best.get("id")
         self.alati_chosen.setText(alati_filter.summary(best))
         dim = alati_filter.dimenzija_text(best)
@@ -620,10 +628,8 @@ class MainWindow(QMainWindow):
         self.recompute_kolicina_display()
         self.alati_search.table.hide()
 
-        # The order's ALATI line follows the chosen die, unless typed by hand
-        if self.alati_nalog_edit.text() in ("", self._alati_auto):
-            self._alati_auto = alati_text(best.get("oznaka_stancne") or "", self.k_broj_zuba)
-            self.alati_nalog_edit.setText(self._alati_auto)
+        # The order's ALATI line follows the chosen die, unless changed by hand
+        self.alati_nalog_edit.propose(self._alati_proposal())
 
         # Backfill Cilindar on existing color rows that are still empty
         new_cylinder = fmt_cylinder_from_zuba(self.k_broj_zuba)
@@ -688,43 +694,25 @@ class MainWindow(QMainWindow):
         self.refresh_stampa_display()
 
     def refresh_stampa_display(self):
-        from datetime import date as _date
-        if not self.series_dates:
-            self.probni_datum_row.show()
-            date_str = self.probni_datum_edit.date().toString("dd.MM.yyyy")
-            text = (
-                f"Štampa prema pripremi, prema uzorcima odštampanim "
-                f"kao probni uzorak {date_str}."
-            )
-        else:
-            self.probni_datum_row.hide()
-            dates = sorted(r["datum"] for r in self.series_dates)
-            fmt = []
-            for d_str in dates:
-                try:
-                    fmt.append(_date.fromisoformat(d_str).strftime("%d.%m.%Y"))
-                except Exception:
-                    fmt.append(d_str)
-            if len(fmt) == 1:
-                joined = fmt[0]
-            else:
-                joined = ",".join(fmt[:-1]) + " i " + fmt[-1]
-            text = (
-                f"Štampa prema pripremi i prema uzorcima odštampanim "
-                f"u prethodnim serijama ({joined})."
-            )
-        self.stampa_display.setText(text)
+        """Propose the Štampa line from the product's earlier runs."""
+        # This order's own run is not one of its earlier runs
+        serije = [
+            r["datum"] for r in self.series_dates
+            if self.doc_number is None or r.get("doc_number") != self.doc_number
+        ]
+        self.probni_datum_row.setVisible(not serije)
+        self.stampa_edit.propose(stampa_text(
+            serije, self.probni_datum_edit.date().toString(Qt.ISODate)
+        ))
 
     def refresh_napred_display(self):
         self.napred_display.setText(napred_ide_text(
             self.napred_slovo_edit.text(), self.napred_naziv_edit.text()
         ))
-
         # NAPOMENA's unwinding line follows, unless it was changed by hand
-        proposed = odmotavanje_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text())
-        if self.odmotavanje_edit.text() in ("", self._odmotavanje_auto):
-            self.odmotavanje_edit.setText(proposed)
-        self._odmotavanje_auto = proposed
+        self.odmotavanje_edit.propose(odmotavanje_text(
+            self.napred_slovo_edit.text(), self.napred_naziv_edit.text()
+        ))
 
     # ------------------------------------------------------------------
     # NAPOMENA
@@ -743,12 +731,23 @@ class MainWindow(QMainWindow):
                 groups.append((rolls, kom))
         return groups
 
-    def _set_roll_groups(self, groups):
+    def _roll_rows(self):
+        """The table's (rolls, kom/rolna) cells as typed, incomplete rows too."""
+        def cell(r, c):
+            item = self.rolne_table.item(r, c)
+            return item.text() if item else ""
+        return [[cell(r, 0), cell(r, 1)] for r in range(self.rolne_table.rowCount())]
+
+    def _set_roll_rows(self, rows):
         self.rolne_table.blockSignals(True)
         self.rolne_table.setRowCount(0)
-        for rolls, kom in groups:
-            self._append_roll_row(str(rolls), fmt_int_sr(kom))
+        for row in rows:
+            rolls, kom = (list(row) + ["", ""])[:2]
+            self._append_roll_row(str(rolls), str(kom))
         self.rolne_table.blockSignals(False)
+
+    def _set_roll_groups(self, groups):
+        self._set_roll_rows([(rolls, fmt_int_sr(kom)) for rolls, kom in groups])
 
     def _append_roll_row(self, rolls="", kom=""):
         r = self.rolne_table.rowCount()
@@ -779,9 +778,10 @@ class MainWindow(QMainWindow):
             kom_po_rolni = parse_int_sr(self.kom_po_rolni_edit.text())
         except ValueError:
             kom_po_rolni = None
+        proposed = split_rolls(self.k_kom_naruceno, kom_po_rolni, self.k_rows_wide)
         if self._roll_groups() in ([], self._rolne_auto):
-            self._rolne_auto = split_rolls(self.k_kom_naruceno, kom_po_rolni, self.k_rows_wide)
-            self._set_roll_groups(self._rolne_auto)
+            self._set_roll_groups(proposed)
+        self._rolne_auto = proposed
         self.refresh_napomena_display()
 
     def refresh_napomena_display(self):
@@ -797,7 +797,8 @@ class MainWindow(QMainWindow):
             self.rolne_table.item(r, 2).setText("" if otk is None else str(otk))
         self.rolne_table.blockSignals(False)
 
-        self.napomena_display.setPlainText(self._rasecanje_line())
+        # The slitting line follows, unless it was changed by hand
+        self.rasecanje_edit.propose(self._rasecanje_line())
 
     def _rasecanje_line(self):
         caure = caure_text(
@@ -812,7 +813,7 @@ class MainWindow(QMainWindow):
     def napomena_full_text(self):
         """NAPOMENA as the order has it: slitting, unwinding, then the rest."""
         return napomena_text(
-            self._rasecanje_line(),
+            self.rasecanje_edit.text(),
             self.odmotavanje_edit.text(),
             self.napomena_ostalo_edit.toPlainText(),
         )
@@ -873,11 +874,14 @@ class MainWindow(QMainWindow):
             "rows_wide":             self.k_rows_wide,
             "kolicina_note":         self.k_note or None,
             "rok_isporuke":          rok_py.isoformat() if rok_py else None,
+            "stampa":                self.stampa_edit.text().strip() or None,
             "napred_slovo":          self.napred_slovo_edit.text().strip() or None,
             "napred_naziv":          self.napred_naziv_edit.text().strip() or None,
             "alati":                 self.alati_nalog_edit.text().strip() or None,
             "opis":                  self.opis_edit.toPlainText().strip() or None,
             "napomena":              self.napomena_full_text() or None,
+            # every field as it is now, to reopen this order as saved
+            "form_state":            self.form_state(),
         }
 
         try:
@@ -907,9 +911,217 @@ class MainWindow(QMainWindow):
                 })
                 self.load_series(sifra)
 
+            self._saved_state = self.form_state()
             QMessageBox.information(self, "Saved", f"Saved document #{res['doc_number']}")
         except Exception as e:
             QMessageBox.critical(self, "Save error", str(e))
+
+    # ------------------------------------------------------------------
+    # The whole form, saved with an order and reopened from it
+    # ------------------------------------------------------------------
+
+    def form_state(self) -> dict:
+        """Every field of the form, to reopen this order exactly as it is now."""
+        return {
+            "version": 1,
+            "masina": self.machine_cb.currentText(),
+            "sifra": self.sifra_edit.text(),
+            "naziv": self.naziv_edit.text(),
+            "dimenzija": self.dim_edit.text(),
+            "materijal": self.mat_edit.text(),
+            "sirina": self.sirina_edit.text(),
+            "narucilac": self.narucilac_edit.text(),
+            "customer_id": self.selected_customer_id,
+            "material_id": self.selected_material_id,
+            "alat": copy.deepcopy(self.chosen_tool),
+            "kolicina": {
+                "kom": self.kolicina_kom_input.text(),
+                "stancna_mm": self.k_stancna_mm,
+                "rows_long": self.k_rows_long,
+                "rows_wide": self.k_rows_wide,
+                "broj_zuba": self.k_broj_zuba,
+                "note": self.k_note,
+            },
+            "rok_isporuke": self.rok_edit.date().toString(Qt.ISODate),
+            "boje": copy.deepcopy(self.color_rows),
+            "probni_datum": self.probni_datum_edit.date().toString(Qt.ISODate),
+            "stampa": self.stampa_edit.text(),
+            "napred_slovo": self.napred_slovo_edit.text(),
+            "napred_naziv": self.napred_naziv_edit.text(),
+            "alati": self.alati_nalog_edit.text(),
+            "opis": self.opis_edit.toPlainText(),
+            "napomena": {
+                "caura_unutra": self.caura_unutra_edit.text(),
+                "caura_spolja": self.caura_spolja_edit.text(),
+                "caura_sirina": self.caura_sirina_edit.text(),
+                "max_d": self.max_d_edit.text(),
+                "kom_po_rolni": self.kom_po_rolni_edit.text(),
+                "rolne": self._roll_rows(),
+                "rasecanje": self.rasecanje_edit.text(),
+                "odmotavanje": self.odmotavanje_edit.text(),
+                "ostalo": self.napomena_ostalo_edit.toPlainText(),
+            },
+        }
+
+    def apply_form_state(self, state: dict):
+        """Fill the form from a saved order. What was saved wins over what the
+        form would propose now; such a text counts as changed by hand."""
+        nap = state.get("napomena") or {}
+        kol = state.get("kolicina") or {}
+
+        idx = self.machine_cb.findText(state.get("masina") or "", Qt.MatchFixedString)
+        if idx >= 0:
+            self.machine_cb.setCurrentIndex(idx)
+        for edit, text in (
+            (self.sifra_edit,        state.get("sifra")),
+            (self.naziv_edit,        state.get("naziv")),
+            (self.dim_edit,          state.get("dimenzija")),
+            (self.mat_edit,          state.get("materijal")),
+            (self.sirina_edit,       state.get("sirina")),
+            (self.narucilac_edit,    state.get("narucilac")),
+            (self.napred_slovo_edit, state.get("napred_slovo")),
+            (self.napred_naziv_edit, state.get("napred_naziv")),
+            (self.caura_unutra_edit, nap.get("caura_unutra")),
+            (self.caura_spolja_edit, nap.get("caura_spolja")),
+            (self.caura_sirina_edit, nap.get("caura_sirina")),
+            (self.max_d_edit,        nap.get("max_d")),
+            (self.kom_po_rolni_edit, nap.get("kom_po_rolni")),
+        ):
+            edit.setText(text or "")
+        self._autofilled = {}   # the order's values are not from the catalogue
+        self.selected_customer_id = state.get("customer_id")
+        self.selected_material_id = state.get("material_id")
+
+        self.chosen_tool = copy.deepcopy(state.get("alat"))
+        self.selected_tool_id = self.chosen_tool.get("id") if self.chosen_tool else None
+        self.alati_chosen.setText(alati_filter.summary(self.chosen_tool) if self.chosen_tool else "")
+        self.alati_search.table.hide()
+
+        self.k_stancna_mm = kol.get("stancna_mm")
+        self.k_rows_long = kol.get("rows_long")
+        self.k_rows_wide = kol.get("rows_wide")
+        self.k_broj_zuba = kol.get("broj_zuba")
+        self.k_note = kol.get("note") or ""
+        self.kolicina_kom_input.setText(kol.get("kom") or "")
+        self.recompute_kolicina_display()   # the die may differ though the number does not
+
+        for edit, iso in (
+            (self.rok_edit,          state.get("rok_isporuke")),
+            (self.probni_datum_edit, state.get("probni_datum")),
+        ):
+            day = QDate.fromString(iso or "", Qt.ISODate)
+            if day.isValid():
+                edit.setDate(day)
+
+        self.color_rows = copy.deepcopy(state.get("boje") or [])
+        self.refresh_colors_preview()
+        self.opis_edit.setPlainText(state.get("opis") or "")
+        self.napomena_ostalo_edit.setPlainText(nap.get("ostalo") or "")
+        self.load_series(self.sifra_edit.text().strip())
+        self.alati_nalog_edit.propose(self._alati_proposal())
+
+        # Last, what can differ from the proposals made on the way here
+        self._set_roll_rows(nap.get("rolne") or [])
+        self.refresh_napomena_display()
+        self.alati_nalog_edit.set_text(state.get("alati") or "")
+        self.stampa_edit.set_text(state.get("stampa") or "")
+        self.rasecanje_edit.set_text(nap.get("rasecanje") or "")
+        self.odmotavanje_edit.set_text(nap.get("odmotavanje") or "")
+
+    def on_open_nalog(self):
+        num, ok = QInputDialog.getInt(
+            self, "Otvori nalog", "Broj naloga:", int(self.doc_number or 1), 1, 2147483647
+        )
+        if ok:
+            self.open_document(num)
+
+    def open_document(self, num):
+        """Reopen an order in the form as it was saved from it."""
+        try:
+            r = requests.get(url(f"/documents/form/{int(num)}"), headers=headers(), timeout=5)
+            if r.status_code == 404:
+                QMessageBox.warning(
+                    self, "Otvori nalog",
+                    f"Nalog {num} nije sačuvan iz forme, pa nema šta da se otvori.",
+                )
+                return
+            r.raise_for_status()
+            state = r.json()["form_state"]
+        except Exception as e:
+            QMessageBox.critical(self, "Otvori nalog", str(e))
+            return
+
+        if self.form_state() != self._saved_state:
+            answer = QMessageBox.question(
+                self, "Nesačuvane izmene",
+                f"Izmene u formi koje nisu sačuvane biće izgubljene. Otvoriti nalog {num}?",
+            )
+            if answer != QMessageBox.Yes:
+                return
+
+        self.doc_number = int(num)
+        self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
+        self.apply_form_state(state)
+        self._saved_state = self.form_state()
+
+
+# ---------------------------------------------------------------------------
+# ProposedText – an editable line the form fills in until the user changes it
+# ---------------------------------------------------------------------------
+
+class ProposedText(QWidget):
+    """An editable text that follows a proposal until it is changed by hand.
+
+    propose() replaces the text only while it still is the previous
+    proposal; a text typed or changed by hand stays, an emptied one too.
+    The "Auto" button, enabled while the two differ, puts the proposal back.
+    """
+
+    def __init__(self, lines=1, placeholder=""):
+        super().__init__()
+        self._proposed = ""
+
+        self.edit = QLineEdit() if lines == 1 else QPlainTextEdit()
+        self.edit.setPlaceholderText(placeholder)
+        if lines > 1:
+            self.edit.setFixedHeight(self.edit.fontMetrics().lineSpacing() * lines + 12)
+        self.edit.textChanged.connect(self._update_auto_btn)
+
+        self.auto_btn = QPushButton("Auto")
+        self.auto_btn.setToolTip("Vrati automatski tekst")
+        self.auto_btn.setFixedWidth(self.auto_btn.fontMetrics().horizontalAdvance("Auto") + 24)
+        self.auto_btn.setEnabled(False)
+        self.auto_btn.clicked.connect(lambda: self.set_text(self._proposed))
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.addWidget(self.edit, 1)
+        layout.addWidget(self.auto_btn, 0, Qt.AlignTop)
+
+    def text(self) -> str:
+        if isinstance(self.edit, QLineEdit):
+            return self.edit.text()
+        return self.edit.toPlainText()
+
+    def set_text(self, text: str):
+        if text != self.text():   # setting the same text would still move the cursor
+            if isinstance(self.edit, QLineEdit):
+                self.edit.setText(text)
+            else:
+                self.edit.setPlainText(text)
+        self._update_auto_btn()
+
+    def propose(self, text: str, force=False):
+        """Take a new proposal. `force` also replaces a text changed by hand."""
+        follows = force or self.text() == self._proposed
+        self._proposed = text
+        if follows:
+            self.set_text(text)
+        self._update_auto_btn()
+
+    def _update_auto_btn(self):
+        self.auto_btn.setEnabled(self.text() != self._proposed)
 
 
 # ---------------------------------------------------------------------------
@@ -1091,6 +1303,7 @@ class NaloziDialog(QDialog):
 
         self.rows = []
         self.selected_row_data = None
+        self.open_in_form = False   # reopen the chosen order, not start a repeat of it
 
         self.search_edit = QLineEdit()
         self.search_edit.setPlaceholderText("Pretraži naloge (broj, naziv, šifra, naručilac...)")
@@ -1125,14 +1338,20 @@ class NaloziDialog(QDialog):
         self.status_lbl = QLabel("")
 
         btn_open = QPushButton("Otvori dokument")
+        btn_open.setToolTip("Otvori Word fajl naloga")
         btn_open.clicked.connect(self.on_open_document)
         btn_fill = QPushButton("Popuni formu")
+        btn_fill.setToolTip("Novi nalog na osnovu ovog (ponovljeni posao)")
         btn_fill.clicked.connect(self.on_fill_form)
+        btn_reopen = QPushButton("Otvori u formi")
+        btn_reopen.setToolTip("Otvori ovaj nalog u formi onako kako je sačuvan")
+        btn_reopen.clicked.connect(self.on_open_in_form)
 
         bottom_row = QHBoxLayout()
         bottom_row.addWidget(self.status_lbl, 1)
         bottom_row.addWidget(btn_open)
         bottom_row.addWidget(btn_fill)
+        bottom_row.addWidget(btn_reopen)
 
         layout = QVBoxLayout()
         layout.addLayout(top_row)
@@ -1207,6 +1426,11 @@ class NaloziDialog(QDialog):
             return
         self.selected_row_data = row
         self.accept()
+
+    def on_open_in_form(self):
+        if self._selected():
+            self.open_in_form = True
+            self.on_fill_form()
 
 
 # ---------------------------------------------------------------------------
