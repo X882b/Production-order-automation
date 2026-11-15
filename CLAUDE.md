@@ -13,7 +13,8 @@ and laid out like the shop's order template. The form is being built top to
 bottom in the template's order:
 
 - done: everything down to ŠTAMPA PREMA PRIPREMI, then NAPRED IDE, ALATI
-  (u nalogu), OPIS and NAPOMENA; the die search has one field per column
+  (u nalogu), OPIS and NAPOMENA; the die search has one field per column;
+  every field is saved with the order and the order can be reopened
 - **next: the date and signature at the bottom** (see the template outline)
 - then: generate the .docx from the form, in the template's layout
 
@@ -29,6 +30,9 @@ Open questions for the owner:
   not given yet)
 - NAPOMENA: the leftover pieces are rounded up to 5 per roll (seen in one
   order only)
+- "New number" keeps the fields that are in the form, also after an order
+  was reopened, so the new order starts as a copy. Should it offer an empty
+  form instead?
 
 For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
 (`rows_wide`); the form does not write that yet.
@@ -55,16 +59,34 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
   every field filled in. The chosen die is shown on its own line.
 - NAPRED IDE is two inputs (letter, name). NAPOMENA's unwinding line is
   proposed with the letter at the other end of the name (the finished roll
-  unwinds the other way round) and can be edited.
+  unwinds the other way round).
 - The cores are three number inputs (inner Ø, outer Ø, width); the form
-  writes "Ø" and "mm" itself.
+  writes "Ø" and "mm" itself. A new order starts with 1.000 kom/rolna and
+  max. Ø150.
 - OPIS and the last NAPOMENA box start with standard text and are editable.
-- The form saves text lines in `doc_params` (keys `napred_slovo`,
+- Four lines are proposed by the form and fully editable (`ProposedText`):
+  Štampa prema pripremi, the order's ALATI line, NAPOMENA's slitting line
+  and its unwinding line. A line follows its proposal while it still is the
+  proposal; once changed by hand it stays as typed, also when emptied (an
+  order without that line), and its "Auto" button puts the proposal back.
+  The roll groups work alike: changed groups stay, removing all of them
+  brings the proposal back.
+- The Štampa proposal lists the product's runs before the order's own run
+  (`ranije_serije`), so it does not change when the order is saved or
+  reopened later. The series dates are shared per šifra; text typed into
+  the Štampa line belongs to that order only.
+- The form saves text lines in `doc_params` (keys `stampa`, `napred_slovo`,
   `napred_naziv`, `alati`, `opis`, `napomena`; the watcher uses `alati`,
   `opis` and `napomena` for the same lines of the Word file). An emptied line
-  is removed; fields left out of a request are not touched. No schema change.
-- A line typed or changed by hand is never overwritten by an automatic
-  refill (ALATI line, roll groups, unwinding line).
+  is removed; fields left out of a request are not touched.
+- Save also stores every field of the form as JSON in `doc_params` key
+  `form_state` (`MainWindow.form_state()`, no schema change).
+  `GET /documents/form/{n}` returns it; "Otvori nalog..." and the search's
+  "Otvori u formi" reopen the order from it (`apply_form_state`). On
+  reopening, what was saved wins over what the form would propose now, and
+  counts as changed by hand where the two differ. A new form field must be
+  added to both `form_state()` and `apply_form_state()`. Orders that only
+  exist as Word files have no `form_state`; the watcher does not touch it.
 - A Word file must reproduce the template exactly, so check new output
   against the outline below.
 

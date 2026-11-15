@@ -30,6 +30,10 @@ the product and die catalogues.
   word (which letter of the name is printed first, the ALATI line, OPIS,
   NAPOMENA with the split into rolls and each roll's counter length), and
   searches past orders to open the Word file or reuse it for a repeat job.
+  The lines it writes can be edited by hand; an edited line stays as typed
+  until its "Auto" button puts the automatic text back. Saving keeps every
+  field with the order, so an order can be reopened exactly as it was
+  saved.
 
 ![Searching past orders](screenshots/order-search.png)
 
@@ -109,6 +113,7 @@ interactive docs are at <http://localhost:8000/docs>.
 | GET | `/ping` | Connection check |
 | POST | `/documents/reserve-number` | Reserve the next order number |
 | POST | `/documents/finalize` | Save an order's fields from the form |
+| GET | `/documents/form/{doc_number}` | The form as saved with an order, to reopen it |
 | POST | `/documents/colors/save` | Replace an order's colour stations |
 | GET | `/documents/colors/{doc_number}` | An order's colour stations |
 | GET | `/documents/search?q=` | Search orders (Meilisearch) |
