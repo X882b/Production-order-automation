@@ -1,13 +1,17 @@
+import json
 from datetime import date
 from typing import Optional
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import text
 
 from server.db import engine
 
 router = APIRouter()
+
+# doc_params key holding everything entered in the form, as JSON
+_FORM_STATE = "form_state"
 
 
 class FinalizeDoc(BaseModel):
@@ -37,19 +41,33 @@ class FinalizeDoc(BaseModel):
 
     # Text lines of the order, kept in doc_params under the same keys the
     # watcher uses for what it reads from the Word file
+    stampa: Optional[str] = None
     napred_slovo: Optional[str] = None
     napred_naziv: Optional[str] = None
     alati: Optional[str] = None
     opis: Optional[str] = None
     napomena: Optional[str] = None
 
+    # Every field of the form as it was saved, so the order can be reopened
+    # in the form exactly as it was (see GET /documents/form/{doc_number})
+    form_state: Optional[dict] = None
 
-_TEXT_PARAMS = {"napred_slovo", "napred_naziv", "alati", "opis", "napomena"}
+
+_TEXT_PARAMS = {"stampa", "napred_slovo", "napred_naziv", "alati", "opis", "napomena"}
+
+
+def _set_param(cx, doc_number: int, key: str, value: str) -> None:
+    cx.execute(text("""
+        INSERT INTO doc_params (doc_number, key, value_text)
+        VALUES (:n, :k, :v)
+        ON CONFLICT (doc_number, key) DO UPDATE SET value_text = EXCLUDED.value_text
+    """), {"n": doc_number, "k": key, "v": value})
 
 
 @router.post("/documents/finalize")
 def finalize_document(payload: FinalizeDoc):
     params = payload.model_dump()
+    form_state = params.pop("form_state")
     with engine.begin() as cx:
         row = cx.execute(
             text("""
@@ -104,14 +122,27 @@ def finalize_document(payload: FinalizeDoc):
         for key in sorted(_TEXT_PARAMS & payload.model_fields_set):
             value = (params[key] or "").strip()
             if value:
-                cx.execute(text("""
-                    INSERT INTO doc_params (doc_number, key, value_text)
-                    VALUES (:n, :k, :v)
-                    ON CONFLICT (doc_number, key) DO UPDATE SET value_text = EXCLUDED.value_text
-                """), {"n": payload.doc_number, "k": key, "v": value})
+                _set_param(cx, payload.doc_number, key, value)
             else:
                 cx.execute(text(
                     "DELETE FROM doc_params WHERE doc_number = :n AND key = :k"
                 ), {"n": payload.doc_number, "k": key})
 
+        if form_state is not None:
+            _set_param(cx, payload.doc_number, _FORM_STATE,
+                       json.dumps(form_state, ensure_ascii=False))
+
     return {"ok": True, "doc_number": row["doc_number"]}
+
+
+@router.get("/documents/form/{doc_number}")
+def get_document_form(doc_number: int):
+    """The form's fields as saved with this order. 404 for an order that was
+    never saved from the form (one that only exists as a Word file)."""
+    with engine.connect() as cx:
+        row = cx.execute(text(
+            "SELECT value_text FROM doc_params WHERE doc_number = :n AND key = :k"
+        ), {"n": doc_number, "k": _FORM_STATE}).fetchone()
+    if not row or not row[0]:
+        raise HTTPException(status_code=404, detail="no saved form for this order")
+    return {"doc_number": doc_number, "form_state": json.loads(row[0])}

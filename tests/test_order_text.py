@@ -2,10 +2,33 @@
 import pytest
 
 from order_text import (
-    NAPOMENA_DEFAULT, OPIS_DEFAULT, alati_text, caure_text, napomena_text,
-    napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, rasecanje_text,
-    rolne_word, split_rolls,
+    KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
+    alati_text, caure_text, napomena_text, napred_ide_text, obrnuto_slovo,
+    odmotavanje_text, otkucaji, rasecanje_text, rolne_word, split_rolls,
+    stampa_text,
 )
+
+
+def test_stampa_line_for_a_first_run_names_the_proof():
+    assert stampa_text([], "2025-04-04") == (
+        "Štampa prema pripremi, prema uzorcima odštampanim kao probni uzorak 04.04.2025."
+    )
+
+
+@pytest.mark.parametrize("serije, joined", [
+    (["2026-08-12"], "12.08.2026"),
+    (["2026-08-12", "2026-11-15"], "12.08.2026 i 15.11.2026"),
+    (["2026-08-12", "2026-11-15", "2026-12-29"], "12.08.2026,15.11.2026 i 29.12.2026"),
+    (["2026-12-29", "2026-08-12", "2026-11-15"], "12.08.2026,15.11.2026 i 29.12.2026"),   # in date order
+])
+def test_stampa_line_lists_the_earlier_runs(serije, joined):
+    assert stampa_text(serije, "2025-04-04") == (
+        f"Štampa prema pripremi i prema uzorcima odštampanim u prethodnim serijama ({joined})."
+    )
+
+
+def test_slitting_defaults():
+    assert (KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT) == ("1.000", "150")
 
 
 def test_napred_ide_sentence():

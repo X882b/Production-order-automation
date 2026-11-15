@@ -3,6 +3,7 @@
 The order is read at the press and by the watcher, so these lines are built
 word for word as in the order template. Like formatting.py, no Qt here.
 """
+import datetime
 import math
 import re
 
@@ -19,6 +20,40 @@ OPIS_DEFAULT = (
 # NAPOMENA starts with this after the slitting and unwinding lines; the
 # user can change it
 NAPOMENA_DEFAULT = "Upakovati u kutije."
+
+# What NAPOMENA's slitting line starts from on a new order
+KOM_PO_ROLNI_DEFAULT = "1.000"
+MAX_D_DEFAULT = "150"
+
+
+def _datum(iso: str) -> str:
+    """'2025-04-04' -> '04.04.2025'; anything else is returned as it is."""
+    try:
+        return datetime.date.fromisoformat(iso).strftime("%d.%m.%Y")
+    except (TypeError, ValueError):
+        return str(iso or "")
+
+
+def stampa_text(serije: list[str], probni_uzorak: str) -> str:
+    """The 'Štampa prema pripremi' line, from ISO dates.
+
+    serije are the product's earlier production runs:
+    'Štampa prema pripremi i prema uzorcima odštampanim u prethodnim
+    serijama (12.08.2026,15.11.2026 i 29.12.2026).' Without any, the line
+    names the proof instead: 'Štampa prema pripremi, prema uzorcima
+    odštampanim kao probni uzorak 04.04.2025.'
+    """
+    if not serije:
+        return (
+            "Štampa prema pripremi, prema uzorcima odštampanim "
+            f"kao probni uzorak {_datum(probni_uzorak)}."
+        )
+    datumi = [_datum(d) for d in sorted(serije)]
+    joined = datumi[0] if len(datumi) == 1 else ",".join(datumi[:-1]) + " i " + datumi[-1]
+    return (
+        "Štampa prema pripremi i prema uzorcima odštampanim "
+        f"u prethodnim serijama ({joined})."
+    )
 
 
 def _napred_ide(prefix: str, slovo: str, naziv: str) -> str:
