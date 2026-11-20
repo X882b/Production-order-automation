@@ -38,6 +38,8 @@ from docx import Document as Docx
 import meilisearch
 import requests
 
+from server.order_numbers import Broj, broj_of, broj_sql, key_of, new_version
+
 # ── configuration ─────────────────────────────────────────────────────────────
 
 BASE      = pathlib.Path(os.getenv("BASE_LOCAL", "/docs"))
@@ -123,9 +125,18 @@ _STANCNA_RE = _stancna_re(os.getenv("STANCNA_PREFIXES", ""))
 # Standalone date paragraph (the signing date at the bottom of the doc)
 _STANDALONE_DATE_RE = re.compile(r"^\d{1,2}\.\d{1,2}\.\d{4}\.?\s*$")
 
-# "NALOG ZA PROIZVODNJU 6276"  (no colon – handled separately).
+# "NALOG ZA PROIZVODNJU 6276"  (no colon – handled separately), or "6276-1"
+# for a version of order 6276 (server/order_numbers.py).
 # Leading zeros are a template placeholder ("0001"), not a real number.
-_NALOG_RE = re.compile(r"^NALOG\s+ZA\s+PROIZVODNJU\s+([1-9]\d*)", re.IGNORECASE)
+_NALOG_NUMBER = r"NALOG\s+ZA\s+PROIZVODNJU\s+([1-9]\d*)(?:-([1-9]\d{0,2}))?(?!\d)"
+_NALOG_RE = re.compile("^" + _NALOG_NUMBER, re.IGNORECASE)
+
+
+def _broj(m: re.Match | None) -> Broj | None:
+    """The number matched by a pattern with the order and the version as groups 1 and 2."""
+    if not m:
+        return None
+    return Broj(int(m.group(1)), int(m.group(2)) if m.group(2) else None)
 
 # Strip whitespace runs
 def _norm(s: str) -> str:
@@ -214,7 +225,8 @@ def parse_production_order(p: pathlib.Path) -> dict:
     Returns
     -------
     {
-      doc_number        : int | None
+      doc_number        : int | None     # the title's number: 6276, also in "6276-1"
+      doc_version       : int | None     # the version after the dash: 1 in "6276-1"
       masina            : str | None
       sifra             : str | None
       naziv             : str | None
@@ -242,6 +254,7 @@ def parse_production_order(p: pathlib.Path) -> dict:
 
     result: dict = {
         "doc_number":             None,
+        "doc_version":            None,
         "masina":                 None,
         "sifra":                  None,
         "naziv":                  None,
@@ -285,7 +298,7 @@ def parse_production_order(p: pathlib.Path) -> dict:
         # ── "NALOG ZA PROIZVODNJU NNN"  (no colon) ───────────────────────
         m = _NALOG_RE.match(text)
         if m:
-            result["doc_number"] = int(m.group(1))
+            result["doc_number"], result["doc_version"] = _broj(m)
             continue
 
         # ── section transitions ───────────────────────────────────────────
@@ -447,15 +460,19 @@ def sanitize_title_for_filename(title: str, fallback: str) -> str:
 MAX_NUMBER_AHEAD = 1000
 
 
-def detect_number_from_text(full_text: str) -> int | None:
-    m = re.search(r"NALOG\s+ZA\s+PROIZVODNJU\s+([1-9]\d*)", full_text, re.IGNORECASE)
-    return int(m.group(1)) if m else None
+def detect_number_from_text(full_text: str) -> Broj | None:
+    return _broj(re.search(_NALOG_NUMBER, full_text, re.IGNORECASE))
 
 
-def detect_number_from_filename(name: str) -> int | None:
-    """Only the watcher's own naming: "6276 - naziv" or a bare "6276"."""
-    m = re.match(r"\s*([1-9]\d*)(?:\s+-|\s*$)", name)
-    return int(m.group(1)) if m else None
+def detect_number_from_filename(name: str) -> Broj | None:
+    """Only the watcher's own naming: "6276 - naziv" or a bare "6276", and
+    "6276-1 - naziv" for a version."""
+    return _broj(re.match(r"\s*([1-9]\d*)(?:-([1-9]\d{0,2}))?(?:\s+-|\s*$)", name))
+
+
+def title_number(meta: dict) -> Broj | None:
+    """The number in the order's title, as parse_production_order read it."""
+    return Broj(meta["doc_number"], meta.get("doc_version")) if meta.get("doc_number") else None
 
 
 def ensure_seq_at_least(n: int) -> None:
@@ -504,6 +521,23 @@ def adopt_manual_number(n: int, user: str = "watcher") -> int | None:
             VALUES (:n, '', 'draft', :u)
         """), {"n": n, "u": user})
     return n
+
+
+def adopt_number(broj: Broj, user: str = "watcher") -> tuple[int, str] | None:
+    """Take the number a new file was given by hand: (key, number as shown),
+    or None when it is taken. A version (6276-2) is taken as a version of
+    order 6276 when that order is known and the version is free."""
+    if broj.version is None:
+        n = adopt_manual_number(broj.base, user)
+        return None if n is None else (n, str(n))
+    with engine.begin() as cx:
+        return new_version(cx, broj.base, user, version=broj.version)
+
+
+def number_key(broj: Broj) -> int | None:
+    """The key (doc_number) of the order numbered broj, if there is one."""
+    with engine.connect() as cx:
+        return key_of(cx, broj)
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -836,14 +870,22 @@ def _search_date_fields(iso: str | None) -> dict:
     return {"datum": day.strftime("%d.%m.%Y"), "datum_sort": int(day.strftime("%Y%m%d"))}
 
 
+def _search_id(broj: str) -> int | str:
+    """The order's number in the search index, its primary key: an order's
+    as a number, as it always was, a version's as text ('6276-1')."""
+    return int(broj) if broj.isdigit() else broj
+
+
 def _index_meili(
     num: int,
     rel_path: str,
     meta: dict,
     full_text: str,
 ) -> None:
+    with engine.connect() as cx:
+        broj = broj_of(cx, num) or str(num)
     doc_ms = {
-        "broj_naloga": num,
+        "broj_naloga": _search_id(broj),
         "naziv":       meta.get("naziv", ""),
         "masina":      meta.get("masina", ""),
         "sifra":       meta.get("sifra", ""),
@@ -883,22 +925,22 @@ def handle_new_or_manual_doc(p: pathlib.Path, meta: dict | None = None) -> None:
     if row is not None:
         return
 
-    # Decide document number
-    cand_text  = meta.get("doc_number") or detect_number_from_text(full_text)
+    # Decide document number: the one it was given, if free, else a new one
+    cand_text  = title_number(meta) or detect_number_from_text(full_text)
     cand_fname = detect_number_from_filename(p.stem)
     candidate  = cand_text or cand_fname
 
-    final_num: int
-    if candidate is not None:
-        adopted = adopt_manual_number(candidate)
-        final_num = adopted if adopted is not None else reserve_new_number()
+    adopted = adopt_number(candidate) if candidate is not None else None
+    if adopted is not None:
+        final_num, final_broj = adopted
     else:
         final_num = reserve_new_number()
+        final_broj = str(final_num)
 
     # Stamp the header line in the document
     try:
         doc = Docx(str(p))
-        header_line = f"NALOG ZA PROIZVODNJU {final_num}"
+        header_line = f"NALOG ZA PROIZVODNJU {final_broj}"
         replaced = False
         for para in doc.paragraphs:
             if "NALOG ZA PROIZVODNJU" in para.text:
@@ -920,10 +962,10 @@ def handle_new_or_manual_doc(p: pathlib.Path, meta: dict | None = None) -> None:
 
     naziv      = meta.get("naziv", "")
     safe_title = sanitize_title_for_filename(naziv, p.stem)
-    dest       = dest_dir / f"{final_num} - {safe_title}.docx"
+    dest       = dest_dir / f"{final_broj} - {safe_title}.docx"
     i = 2
     while dest.exists():
-        dest = dest_dir / f"{final_num} - {safe_title}_{i}.docx"
+        dest = dest_dir / f"{final_broj} - {safe_title}_{i}.docx"
         i += 1
 
     dest.write_bytes(p.read_bytes())
@@ -956,13 +998,16 @@ def _is_existing_order(num: int, rel_path: str) -> bool:
 def handle_doc(p: pathlib.Path) -> None:
     rel_path   = str(p.relative_to(BASE)).replace(os.sep, "/")
     meta       = parse_production_order(p)
-    cand_text  = meta.get("doc_number")
+    cand_text  = title_number(meta)
     cand_fname = detect_number_from_filename(p.stem)
 
     # A known order – even renamed or moved – keeps its number. The header
     # number, when present, must agree (a copy edited into a new order won't).
-    for num in dict.fromkeys(n for n in (cand_fname, cand_text) if n):
-        if cand_text in (None, num) and _is_existing_order(num, rel_path):
+    for broj in dict.fromkeys(b for b in (cand_fname, cand_text) if b):
+        if cand_text not in (None, broj):
+            continue
+        num = number_key(broj)
+        if num is not None and _is_existing_order(num, rel_path):
             digest, size = sha256_of(p)
             update_existing_doc(num, p, digest, size, meta)
             return
@@ -1046,9 +1091,9 @@ def sync_search_index() -> None:
     """Rebuild the Meilisearch index from Postgres, the source of truth, so
     orders saved from the GUI or while the watcher was down are searchable."""
     with engine.connect() as cx:
-        docs = cx.execute(text("""
-            SELECT d.doc_number, d.rel_path, d.naziv, d.sifra, d.dimenzija,
-                   d.sirina, d.rok_isporuke, t.content
+        docs = cx.execute(text(f"""
+            SELECT d.doc_number, {broj_sql("d")} AS broj, d.rel_path, d.naziv, d.sifra,
+                   d.dimenzija, d.sirina, d.rok_isporuke, t.content
               FROM documents d
               LEFT JOIN doc_text t USING (doc_number)
         """)).mappings().all()
@@ -1063,7 +1108,7 @@ def sync_search_index() -> None:
     for d in docs:
         p = params.get(d["doc_number"], {})
         doc_ms = {
-            "broj_naloga":  d["doc_number"],
+            "broj_naloga":  _search_id(d["broj"]),
             "naziv":        s(d["naziv"] or p.get("naziv")),
             "masina":       s(p.get("masina")),
             "sifra":        s(d["sifra"] or p.get("sifra")),

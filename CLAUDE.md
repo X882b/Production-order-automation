@@ -15,19 +15,18 @@ bottom in the template's order:
 - done: the whole template, top to bottom, down to the date and signature;
   the die search has one field per column; every field is saved with the
   order and the order can be reopened; "Word nalog" writes the order's Word
-  file in the template's layout, and the watcher files and reads it
+  file in the template's layout, and the watcher files and reads it; "New
+  number" starts an empty order and "Nova verzija" makes 12345-1, 12345-2
 - next: the owner's open questions below
 
 Open questions for the owner:
-- colour-row exceptions the owner wants as presets in ŠIFRA BOJA: ZLATOTISAK
-  (`folija zlatna, lepakzafoliju UVH0-0007+“zlatna“ folija KFA 100 Gloss
-  Gold,ras. 140l/cm,` on its own station, e.g. VII), SREBRNA and BELA (texts
-  not given yet)
 - NAPOMENA: the leftover pieces are rounded up to 5 per roll (seen in one
-  order only)
-- "New number" keeps the fields that are in the form, also after an order
-  was reopened, so the new order starts as a copy. Should it offer an empty
-  form instead?
+  order only): 100.000 kom, 1.000 kom/rolna, 3 lanes gives 99 rolls of 1.000
+  and 3 rolls of 335 (333,33 rounded up to 5). Is 5 the rule, or 334?
+- later, when the owner gives the texts: colour-row presets in ŠIFRA BOJA.
+  ZLATOTISAK is known (`folija zlatna, lepakzafoliju UVH0-0007+“zlatna“
+  folija KFA 100 Gloss Gold,ras. 140l/cm,` on its own station, e.g. VII);
+  SREBRNA and BELA will come later
 
 ## Decisions already made
 
@@ -113,12 +112,38 @@ Open questions for the owner:
   will index it when it arrives.
 - Save also stores every field of the form as JSON in `doc_params` key
   `form_state` (`MainWindow.form_state()`, no schema change).
-  `GET /documents/form/{n}` returns it; "Otvori nalog..." and the search's
+  `GET /documents/form/{broj}` returns it; "Otvori nalog..." and the search's
   "Otvori u formi" reopen the order from it (`apply_form_state`). On
   reopening, what was saved wins over what the form would propose now, and
   counts as changed by hand where the two differ. A new form field must be
   added to both `form_state()` and `apply_form_state()`. Orders that only
   exist as Word files have no `form_state`; the watcher does not touch it.
+- "New number" starts an empty order: the form as when it is opened (the
+  standard texts, 1.000 kom/rolna, max. Ø150, today's dates, the proposed
+  lines following their proposals); the machine stays. With unsaved changes
+  it asks first. On a form that has no order yet, what was typed stays: it
+  is the new order. A repeat job starts from search's "Popuni formu".
+- "Nova verzija" copies the open order into its next version: 12345-1, then
+  12345-2; from a version comes the next free version of the same order,
+  never 12345-1-1. It is on while the form holds a saved order. The version
+  is dated today with delivery in a week; the order it was made from stays
+  as saved. A version is an order of its own: own fields, colour rows, run
+  date, Word file (`12345-1 - naziv.docx`, titled `NALOG ZA PROIZVODNJU
+  12345-1`).
+- In the database a version is a `documents` row with `base_number` and
+  `doc_version`; its key `doc_number` comes from `doc_version_seq`, counting
+  down from -1, so versions never use up or move the order numbers
+  (`server/order_numbers.py`, `server/schema_versions.sql`). The other
+  tables keep using `doc_number`. The form keeps the key (`doc_number`) and
+  the number as shown (`broj`) apart; the API answers with `broj`, and
+  `GET /documents/form/{broj}` takes `6276` or `6276-1`. In search,
+  `broj_naloga` is a number for an order (as before) and text for a version;
+  the search window sorts versions right after their order.
+- The watcher reads `6276-1` in the title and in the file name
+  (`6276-1 - naziv.docx`). A version's file is filed as that version. A
+  hand-made version number of a known order (typed into a copy of its file)
+  becomes that version when it is free; a taken one, or one of an unknown
+  order, becomes a new order, as duplicate numbers always did.
 - A Word file must reproduce the template exactly, so check new output
   against the outline below.
 

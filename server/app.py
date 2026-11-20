@@ -7,6 +7,7 @@ from fastapi import FastAPI, Depends, Header, HTTPException
 from sqlalchemy import text
 
 from server.db import engine
+from server.order_numbers import new_version
 from server.routes_lookup import router as lookup_router
 from server.routes_documents_finalize import router as finalize_router
 from server.routes_doc_colors import router as doc_colors_router
@@ -42,6 +43,22 @@ def reserve_number(username: str = "watcher"):
             INSERT INTO documents (doc_number, title, status, created_by)
             VALUES (:n, '', 'draft', :u)
         """), {"n": num, "u": username})
-    return {"doc_number": num}
+    return {"doc_number": num, "broj": str(num)}
+
+
+@app.post("/documents/{doc_number}/new-version", dependencies=[Depends(require_api_key)])
+def make_new_version(doc_number: int, username: str = "gui"):
+    """A new version of the order (12345 -> 12345-1, then 12345-2, also when
+    made from 12345-1): an order of its own, numbered after the order.
+    doc_number is the key of the order or of one of its versions."""
+    with engine.begin() as cx:
+        try:
+            made = new_version(cx, doc_number, username)
+        except ValueError as e:
+            raise HTTPException(status_code=409, detail=str(e))
+    if made is None:
+        raise HTTPException(status_code=404, detail="no such order")
+    key, broj = made
+    return {"doc_number": key, "broj": broj}
 
 

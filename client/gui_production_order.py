@@ -27,7 +27,7 @@ from order_text import (
     DATUM_LABEL, POTPIS_LABEL, POTPIS_LINIJA,
     napred_ide_text, alati_text, stampa_text, ranije_serije,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
-    caure_text, kolicina_parts,
+    caure_text, kolicina_parts, BROJ_RE, broj_sort_key,
 )
 import alati_filter
 
@@ -69,7 +69,10 @@ class MainWindow(QMainWindow):
         super().__init__()
         self.setWindowTitle("YU LABEL – Nalog za proizvodnju")
 
+        # The order in the form: its key in the database, and its number as
+        # shown (12345, or 12345-1 for a version; differs from the key then)
         self.doc_number = None
+        self.broj = None
         self.selected_customer_id = None
         self.selected_material_id = None
         self.selected_tool_id = None
@@ -103,7 +106,17 @@ class MainWindow(QMainWindow):
 
         # ---- Buttons ----
         btn_new = QPushButton("New number")
+        btn_new.setToolTip("Novi, prazan nalog sa sledećim brojem")
         btn_new.clicked.connect(self.on_new_number)
+
+        # Enabled while the form holds a saved order
+        self.btn_version = QPushButton("Nova verzija")
+        self.btn_version.setToolTip(
+            "Novi nalog kao sledeća verzija ovog naloga (12345-1, 12345-2...),\n"
+            "sa istim podacima i današnjim datumom"
+        )
+        self.btn_version.setEnabled(False)
+        self.btn_version.clicked.connect(self.on_new_version)
 
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.on_save)
@@ -124,6 +137,7 @@ class MainWindow(QMainWindow):
         top_btns.addWidget(btn_open)
         top_btns.addStretch()
         top_btns.addWidget(btn_new)
+        top_btns.addWidget(self.btn_version)
         top_btns.addWidget(btn_save)
         top_btns.addWidget(btn_word)
 
@@ -462,7 +476,28 @@ class MainWindow(QMainWindow):
     # Document number
     # ------------------------------------------------------------------
 
+    def _set_number(self, key, broj):
+        """Make the form's order the one with key `key`, shown as broj."""
+        self.doc_number = int(key)
+        self.broj = str(broj)
+        self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {self.broj}")
+
+    def _unsaved_ok(self, question: str) -> bool:
+        """True if the form has no unsaved changes, or the user agrees to lose them."""
+        if self.form_state() == self._saved_state:
+            return True
+        answer = QMessageBox.question(
+            self, "Nesačuvane izmene",
+            f"Izmene u formi koje nisu sačuvane biće izgubljene. {question}?",
+        )
+        return answer == QMessageBox.Yes
+
     def on_new_number(self):
+        """A new, empty order on the next number. What was typed into a form
+        that has no order yet stays: it is the new order."""
+        had_order = self.doc_number is not None
+        if had_order and not self._unsaved_ok("Novi nalog"):
+            return
         try:
             data = requests.post(
                 url("/documents/reserve-number"),
@@ -471,16 +506,67 @@ class MainWindow(QMainWindow):
                 timeout=5,
             )
             data.raise_for_status()
-            num = data.json().get("doc_number")
-            self.doc_number = num
-            self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
+            res = data.json()
+        except Exception as e:
+            QMessageBox.critical(self, "Reserve number error", str(e))
+            return
+        self._set_number(res["doc_number"], res.get("broj") or res["doc_number"])
+        self.btn_version.setEnabled(False)
+        if had_order:
+            self.clear_form()
+        else:
             self.rok_edit.setDate(QDate.currentDate().addDays(7))
             self.datum_edit.setDate(QDate.currentDate())   # a new order is dated today
             if self.sifra_edit.text().strip():
                 # which of the product's runs count as earlier depends on the order
                 self.refresh_stampa_display()
+
+    def clear_form(self):
+        """Empty the form for a new order: the standard texts, today's dates
+        and the proposed lines; the rest empty. The machine stays."""
+        today = QDate.currentDate()
+        self.apply_form_state({
+            "masina": self.machine_cb.currentText(),
+            "opis": OPIS_DEFAULT,
+            "napomena": {
+                "max_d": MAX_D_DEFAULT,
+                "kom_po_rolni": KOM_PO_ROLNI_DEFAULT,
+                "ostalo": NAPOMENA_DEFAULT,
+            },
+            "rok_isporuke": today.addDays(7).toString(Qt.ISODate),
+            "probni_datum": today.toString(Qt.ISODate),
+            "datum": today.toString(Qt.ISODate),
+        })
+        # nothing on a new order is typed by hand: the lines follow their
+        # proposals; the Štampa line waits for the šifra, as on a fresh form
+        self.stampa_edit.propose("", force=True)
+        for edit in (self.alati_nalog_edit, self.rasecanje_edit, self.odmotavanje_edit):
+            edit.use_proposal()
+        self.alati_search.clear()
+        self._saved_state = self.form_state()
+
+    def on_new_version(self):
+        """The order in the form as a new order: its next version (from
+        12345 or 12345-1 comes the next free 12345-N), with the same fields,
+        dated today. The order it was made from stays as it was saved."""
+        if self.doc_number is None:
+            return
+        try:
+            r = requests.post(
+                url(f"/documents/{int(self.doc_number)}/new-version"),
+                headers=headers(), params={"username": "gui"}, timeout=5,
+            )
+            r.raise_for_status()
+            res = r.json()
         except Exception as e:
-            QMessageBox.critical(self, "Reserve number error", str(e))
+            QMessageBox.critical(self, "Nova verzija", str(e))
+            return
+        self._set_number(res["doc_number"], res["broj"])
+        self.btn_version.setEnabled(False)   # until this version is saved
+        self.rok_edit.setDate(QDate.currentDate().addDays(7))
+        self.datum_edit.setDate(QDate.currentDate())   # a new order is dated today
+        # the order it was made from is now one of the product's earlier runs
+        self.refresh_stampa_display()
 
     # ------------------------------------------------------------------
     # Product lookup by ŠIFRA
@@ -890,7 +976,7 @@ class MainWindow(QMainWindow):
     def on_save(self):
         res = self.save_order()
         if res is not None:
-            QMessageBox.information(self, "Saved", f"Saved document #{res['doc_number']}")
+            QMessageBox.information(self, "Saved", f"Saved document #{self.broj}")
 
     def save_order(self):
         """Save the order; the API's answer, or None after saying why not."""
@@ -960,6 +1046,7 @@ class MainWindow(QMainWindow):
                 self.load_series(sifra)
 
             self._saved_state = self.form_state()
+            self.btn_version.setEnabled(True)
             return res
         except Exception as e:
             QMessageBox.critical(self, "Save error", str(e))
@@ -973,7 +1060,7 @@ class MainWindow(QMainWindow):
         """The order's values for its Word file (see order_docx.order_lines)."""
         masina = self.machine_cb.currentText()
         return {
-            "broj": int(self.doc_number),
+            "broj": self.broj,
             "masina": "" if masina not in self.machine_map else masina,
             "sifra": self.sifra_edit.text(),
             "naziv": self.naziv_edit.text(),
@@ -1010,9 +1097,8 @@ class MainWindow(QMainWindow):
         res = self.save_order()
         if res is None:
             return
-        num = int(self.doc_number)
         try:
-            path = order_docx.order_file(DOCS_DIR, num, self.naziv_edit.text(),
+            path = order_docx.order_file(DOCS_DIR, self.broj, self.naziv_edit.text(),
                                          res.get("rel_path"), datetime.date.today())
         except OSError as e:
             QMessageBox.critical(self, "Word nalog", f"Folder naloga nije dostupan:\n{DOCS_DIR}\n\n{e}")
@@ -1020,7 +1106,7 @@ class MainWindow(QMainWindow):
         if path.exists():
             answer = QMessageBox.question(
                 self, "Word nalog",
-                f"Nalog {num} već ima Word fajl:\n{path}\n\nZameniti ga nalogom iz forme?",
+                f"Nalog {self.broj} već ima Word fajl:\n{path}\n\nZameniti ga nalogom iz forme?",
             )
             if answer != QMessageBox.Yes:
                 return
@@ -1149,40 +1235,44 @@ class MainWindow(QMainWindow):
         self.odmotavanje_edit.set_text(nap.get("odmotavanje") or "")
 
     def on_open_nalog(self):
-        num, ok = QInputDialog.getInt(
-            self, "Otvori nalog", "Broj naloga:", int(self.doc_number or 1), 1, 2147483647
+        broj, ok = QInputDialog.getText(
+            self, "Otvori nalog", "Broj naloga (npr. 6276, ili 6276-1 za verziju):",
+            text=self.broj or "",
         )
-        if ok:
-            self.open_document(num)
+        if not ok:
+            return
+        broj = broj.strip()
+        if not BROJ_RE.fullmatch(broj):
+            QMessageBox.warning(self, "Otvori nalog",
+                                f"„{broj}“ nije broj naloga. Upišite npr. 6276 ili 6276-1.")
+            return
+        self.open_document(broj)
 
-    def open_document(self, num):
-        """Reopen an order in the form as it was saved from it."""
+    def open_document(self, broj):
+        """Reopen an order in the form as it was saved from it (broj: 6276,
+        or 6276-1 for a version)."""
+        broj = str(broj).strip()
         try:
-            r = requests.get(url(f"/documents/form/{int(num)}"), headers=headers(), timeout=5)
+            r = requests.get(url(f"/documents/form/{broj}"), headers=headers(), timeout=5)
             if r.status_code == 404:
                 QMessageBox.warning(
                     self, "Otvori nalog",
-                    f"Nalog {num} nije sačuvan iz forme, pa nema šta da se otvori.",
+                    f"Nalog {broj} nije sačuvan iz forme, pa nema šta da se otvori.",
                 )
                 return
             r.raise_for_status()
-            state = r.json()["form_state"]
+            data = r.json()
         except Exception as e:
             QMessageBox.critical(self, "Otvori nalog", str(e))
             return
 
-        if self.form_state() != self._saved_state:
-            answer = QMessageBox.question(
-                self, "Nesačuvane izmene",
-                f"Izmene u formi koje nisu sačuvane biće izgubljene. Otvoriti nalog {num}?",
-            )
-            if answer != QMessageBox.Yes:
-                return
+        if not self._unsaved_ok(f"Otvoriti nalog {broj}"):
+            return
 
-        self.doc_number = int(num)
-        self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
-        self.apply_form_state(state)
+        self._set_number(data["doc_number"], data.get("broj") or broj)
+        self.apply_form_state(data["form_state"])
         self._saved_state = self.form_state()
+        self.btn_version.setEnabled(True)
 
 
 # ---------------------------------------------------------------------------
@@ -1211,7 +1301,7 @@ class ProposedText(QWidget):
         self.auto_btn.setToolTip("Vrati automatski tekst")
         self.auto_btn.setFixedWidth(self.auto_btn.fontMetrics().horizontalAdvance("Auto") + 24)
         self.auto_btn.setEnabled(False)
-        self.auto_btn.clicked.connect(lambda: self.set_text(self._proposed))
+        self.auto_btn.clicked.connect(self.use_proposal)
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -1223,6 +1313,10 @@ class ProposedText(QWidget):
         if isinstance(self.edit, QLineEdit):
             return self.edit.text()
         return self.edit.toPlainText()
+
+    def use_proposal(self):
+        """Put the proposal back (what the "Auto" button does)."""
+        self.set_text(self._proposed)
 
     def set_text(self, text: str):
         if text != self.text():   # setting the same text would still move the cursor
@@ -1251,9 +1345,9 @@ class ProposedText(QWidget):
 _SORT_ROLE = Qt.UserRole + 1
 
 
-class _DateItem(QTableWidgetItem):
-    """A table cell showing a date as 18.07.2025 that sorts by the date
-    (sort_key YYYYMMDD; 0, no date, sorts first)."""
+class _SortItem(QTableWidgetItem):
+    """A table cell showing text that sorts by sort_key, a number: a date
+    18.07.2025 by 20250718, an order 6276-1 by 6276001 (0 sorts first)."""
 
     def __init__(self, text: str, sort_key: int):
         super().__init__(text)
@@ -1359,6 +1453,14 @@ class AlatiSearch(QWidget):
             elif event.type() == QEvent.KeyPress and event.key() == Qt.Key_Escape:
                 self.table.hide()
         return super().eventFilter(obj, event)
+
+    def clear(self):
+        """Empty the search fields; a collapsed table hides."""
+        for edit in self.filters.values():
+            edit.clear()
+        self.filter_timer.stop()   # no search for the emptied fields
+        if self._collapsed:
+            self.table.hide()
 
     def apply_filters(self):
         """Show the dies that fit the search fields (loading them if needed)."""
@@ -1528,8 +1630,9 @@ class NaloziDialog(QDialog):
                 rok = (rok_day.strftime("%d.%m.%Y"), int(rok_day.strftime("%Y%m%d")))
             except ValueError:
                 rok = (rok, 0)
+            broj = str(row.get("broj_naloga") or "")
             values = [
-                row.get("broj_naloga"),
+                (broj, broj_sort_key(broj)),   # an order's versions right after it
                 (row.get("datum") or "", row.get("datum_sort") or 0),   # the order's date
                 row.get("naziv") or "",
                 row.get("sifra") or "",
@@ -1538,11 +1641,8 @@ class NaloziDialog(QDialog):
                 rok,
             ]
             for col, value in enumerate(values):
-                if col == 0:
-                    item = QTableWidgetItem()
-                    item.setData(Qt.DisplayRole, value)   # numeric sort
-                elif isinstance(value, tuple):
-                    item = _DateItem(*value)
+                if isinstance(value, tuple):
+                    item = _SortItem(*value)
                 else:
                     item = QTableWidgetItem(str(value))
                 item.setData(Qt.UserRole, i)
@@ -2102,7 +2202,8 @@ class SeriesDialog(QDialog):
             except Exception:
                 datum_str = str(row.get("datum", ""))
             self.table.setItem(r, 0, QTableWidgetItem(datum_str))
-            self.table.setItem(r, 1, QTableWidgetItem(str(row.get("doc_number") or "")))
+            # the run's order as shown (12345, or 12345-1 for a version)
+            self.table.setItem(r, 1, QTableWidgetItem(str(row.get("broj") or row.get("doc_number") or "")))
             self.table.setItem(r, 2, QTableWidgetItem(str(row.get("note") or "")))
 
     def on_add(self):

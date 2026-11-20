@@ -8,6 +8,7 @@ import pytest
 from formatting import fmt_float_sr, fmt_int_sr
 from order_text import alati_text, datum_potpis_lines
 from server import watcher_v2_1 as watcher
+from server.order_numbers import Broj
 
 ORDER = [
     "NALOG ZA PROIZVODNJU 6276",
@@ -40,6 +41,7 @@ def test_parses_a_complete_order(make_docx):
     meta = watcher.parse_production_order(make_docx(ORDER))
 
     assert meta["doc_number"] == 6276
+    assert meta["doc_version"] is None
     assert meta["masina"] == "Nilpeter FA2500"
     assert meta["sifra"] == "DEMO-250101"
     assert meta["naziv"] == "nalepnica Demo sok 0,5 l, P+Z"
@@ -123,6 +125,15 @@ def test_description_ends_at_a_later_field(make_docx):
     assert meta["opis"] == "smer odmotavanja 4 | jezgro 76 mm"
     assert meta["materijal"] == "PP transparent"
     assert meta["stancna_code"] == "XYZ14-05-54321"
+
+
+def test_a_version_is_read_with_its_order_number(make_docx):
+    meta = watcher.parse_production_order(make_docx(["NALOG ZA PROIZVODNJU 6276-2"] + ORDER[1:]))
+
+    assert (meta["doc_number"], meta["doc_version"]) == (6276, 2)
+    assert watcher.title_number(meta) == Broj(6276, 2)
+    assert watcher.parse_warnings(meta) == watcher.parse_warnings(
+        watcher.parse_production_order(make_docx(ORDER, name="original.docx")))
 
 
 def test_template_placeholder_number_is_not_an_order_number(make_docx):
@@ -338,9 +349,13 @@ def test_search_index_date_fields(iso, expected):
 # ── order numbers and file names ─────────────────────────────────────────────
 
 @pytest.mark.parametrize("stem, expected", [
-    ("6276 - nalepnica Demo", 6276),
-    ("6276 - nalepnica Demo_2", 6276),   # the watcher's de-duplicated name
-    ("6276", 6276),
+    ("6276 - nalepnica Demo", Broj(6276)),
+    ("6276 - nalepnica Demo_2", Broj(6276)),   # the watcher's de-duplicated name
+    ("6276", Broj(6276)),
+    ("6276-1 - nalepnica Demo", Broj(6276, 1)),   # a version
+    ("6276-12", Broj(6276, 12)),
+    ("6276-2025 - sken", None),          # not a version: four digits
+    ("6276-0 - x", None),
     ("nalog 6276", None),
     ("20251006 sken", None),             # a date-like number is not adopted
     ("0001 - sablon", None),             # template placeholder
@@ -350,8 +365,11 @@ def test_detect_number_from_filename(stem, expected):
 
 
 @pytest.mark.parametrize("text, expected", [
-    ("Firma\nNALOG ZA PROIZVODNJU 6276\nMAŠINA: X", 6276),
-    ("nalog za proizvodnju 15", 15),
+    ("Firma\nNALOG ZA PROIZVODNJU 6276\nMAŠINA: X", Broj(6276)),
+    ("nalog za proizvodnju 15", Broj(15)),
+    ("NALOG ZA PROIZVODNJU 6276-3\nMAŠINA: X", Broj(6276, 3)),
+    ("NALOG ZA PROIZVODNJU 6276-2025", Broj(6276)),   # a year, not a version
+    ("NALOG ZA PROIZVODNJU 6276 - hitno", Broj(6276)),
     ("NALOG ZA PROIZVODNJU 0001", None),
     ("", None),
 ])

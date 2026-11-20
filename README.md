@@ -15,7 +15,8 @@ the product and die catalogues.
 - **Watches a shared folder** for `.docx` production orders. A new order
   keeps the number in its header or gets the next free one, and is filed as
   `YYYY/MM/DD/<number> - <product>.docx`. Renamed or moved orders keep
-  their number.
+  their number. A version of an order is numbered after it (`6276-1`,
+  `6276-2`) and filed the same way.
 - **Parses each order** into fields: press, product code, name, size,
   material, web width, customer, quantity, delivery date, die, colour
   stations and notes. Orders with missing fields are flagged for review,
@@ -37,7 +38,9 @@ the product and die catalogues.
   The lines it writes can be edited by hand; an edited line stays as typed
   until its "Auto" button puts the automatic text back. Saving keeps every
   field with the order, so an order can be reopened exactly as it was
-  saved.
+  saved. "New number" starts an empty order; "Nova verzija" copies the
+  open order into its next version (6276-1, 6276-2, ...), an order of its
+  own with its own Word file.
 
 ![Searching past orders](screenshots/order-search.png)
 
@@ -68,10 +71,11 @@ When a `.docx` appears or changes, the watcher:
 1. waits until the file stops growing (Word saves and copies arrive in
    pieces);
 2. takes the order number from the header line
-   `NALOG ZA PROIZVODNJU <n>` or the file name. A known order is updated in
-   place; a new one gets the number, or the next value of a Postgres
-   sequence if the number is missing, already taken or implausible (such as
-   a date);
+   `NALOG ZA PROIZVODNJU <n>` or the file name (`<n>-<v>` for a version of
+   order `<n>`). A known order is updated in place; a new one gets the
+   number, or the next value of a Postgres sequence if the number is
+   missing, already taken or implausible (such as a date, or a version of
+   an order that doesn't exist);
 3. for a new order, writes the number into the document header and moves
    the file into the dated folder;
 4. saves the parsed fields, full text, colour rows and parse status, and
@@ -91,7 +95,8 @@ pytest
 
 ```
 server/
-  app.py                    FastAPI app, API-key check, number reservation
+  app.py                    FastAPI app, API-key check, order numbers and versions
+  order_numbers.py          order numbers as shown (6276, 6276-1) and their keys
   routes_*.py               lookups, saving orders, colours, run dates, search
   watcher_v2_1.py           folder watcher and .docx order parser
   schema*.sql               database schema (see Setup)
@@ -118,8 +123,9 @@ interactive docs are at <http://localhost:8000/docs>.
 |---|---|---|
 | GET | `/ping` | Connection check |
 | POST | `/documents/reserve-number` | Reserve the next order number |
+| POST | `/documents/{doc_number}/new-version` | Make the next version of an order (`6276-1`, `6276-2`, ...) |
 | POST | `/documents/finalize` | Save an order's fields from the form |
-| GET | `/documents/form/{doc_number}` | The form as saved with an order, to reopen it |
+| GET | `/documents/form/{broj}` | The form as saved with an order (`6276`, or `6276-1` for a version), to reopen it |
 | POST | `/documents/colors/save` | Replace an order's colour stations |
 | GET | `/documents/colors/{doc_number}` | An order's colour stations |
 | GET | `/documents/search?q=` | Search orders (Meilisearch), newest first; a day (`18.07.2025`) or month (`07.2025`) in `q` keeps the orders of that date |
@@ -159,7 +165,7 @@ Fill in `.env`:
 docker compose up -d db
 for f in server/schema.sql server/schema_lookup.sql server/schema_kolicina.sql \
          server/schema_doc_colors.sql server/schema_series.sql \
-         server/schema_tools.sql schema_watcher_v2_1.sql; do
+         server/schema_tools.sql schema_watcher_v2_1.sql server/schema_versions.sql; do
   docker compose exec -T db sh -c 'psql -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d "$POSTGRES_DB"' < "$f"
 done
 ```

@@ -6,6 +6,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from server.db import engine
+from server.order_numbers import broj_sql
 
 router = APIRouter()
 
@@ -21,11 +22,14 @@ class SeriesEntry(BaseModel):
 def get_series(sifra: str = Query(..., max_length=200)):
     with engine.connect() as cx:
         rows = cx.execute(
-            text("""
-                SELECT id, sifra, datum, note, doc_number
-                FROM product_series
-                WHERE LOWER(sifra) = LOWER(:s)
-                ORDER BY datum
+            # broj: the run's order as shown (12345, or 12345-1 for a version)
+            text(f"""
+                SELECT s.id, s.sifra, s.datum, s.note, s.doc_number,
+                       {broj_sql("d")} AS broj
+                FROM product_series s
+                LEFT JOIN documents d ON d.doc_number = s.doc_number
+                WHERE LOWER(s.sifra) = LOWER(:s)
+                ORDER BY s.datum
             """),
             {"s": sifra},
         ).mappings().all()

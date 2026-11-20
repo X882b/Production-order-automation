@@ -26,6 +26,21 @@ KOM_PO_ROLNI_DEFAULT = "1.000"
 MAX_D_DEFAULT = "150"
 
 
+# An order's number as typed or shown: 12345, or 12345-1 for a version of
+# order 12345 (server/order_numbers.py)
+BROJ_RE = re.compile(r"[1-9]\d*(?:-[1-9]\d{0,2})?")
+
+
+def broj_sort_key(broj) -> int:
+    """12345 -> 12345000, 12345-1 -> 12345001: an order's versions sort
+    right after it. 0 for anything that is not an order's number."""
+    text = str(broj if broj is not None else "").strip()
+    if not BROJ_RE.fullmatch(text):
+        return 0
+    base, _, version = text.partition("-")
+    return int(base) * 1000 + int(version or 0)
+
+
 def _datum(iso: str) -> str:
     """'2025-04-04' -> '04.04.2025'; anything else is returned as it is."""
     try:

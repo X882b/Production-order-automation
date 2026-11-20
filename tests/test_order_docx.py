@@ -246,3 +246,16 @@ def test_order_file(tmp_path):
     (old.parent / ".6276 - nalepnica Demo.docx.tmp").write_bytes(b"")
     (old.parent / "62760 - druga.docx").write_bytes(b"")
     assert order_docx.order_file(tmp_path, 6276, "nalepnica Demo", None, today) == old
+    # a version has a file of its own, never order 6276's
+    assert order_docx.order_file(tmp_path, "6276-1", "nalepnica Demo", None, today) == \
+        tmp_path / "2026/11/20/6276-1 - nalepnica Demo.docx"
+
+
+def test_a_version_s_word_file_is_read_back_as_that_version(tmp_path):
+    path = tmp_path / "6276-1 - nalepnica Demo.docx"
+    order_docx.write_order(path, {**ORDER, "broj": "6276-1"})
+
+    assert order_lines({**ORDER, "broj": "6276-1"})[1] == ([("NALOG ZA PROIZVODNJU 6276-1", B)], True)
+    meta = watcher.parse_production_order(path)
+    assert watcher.title_number(meta) == watcher.detect_number_from_filename(path.stem) == (6276, 1)
+    assert watcher.parse_warnings(meta) == []

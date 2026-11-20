@@ -147,11 +147,11 @@ def _rasecanje_runs(line: str) -> list:
 
 def order_lines(order: dict) -> list[tuple[list, bool]]:
     """The order's paragraphs as (runs, centred), top to bottom; a run is
-    (text, format). order holds the form's values: broj, masina, sifra,
-    naziv, dimenzija, materijal, sirina, narucilac, kolicina (the two parts
-    of order_text.kolicina_parts), rok and datum (ISO), boje (colour rows),
-    stampa, napred, alati, opis, rasecanje, odmotavanje and napomena (the
-    last NAPOMENA lines)."""
+    (text, format). order holds the form's values: broj (6276, or 6276-1
+    for a version), masina, sifra, naziv, dimenzija, materijal, sirina,
+    narucilac, kolicina (the two parts of order_text.kolicina_parts), rok
+    and datum (ISO), boje (colour rows), stampa, napred, alati, opis,
+    rasecanje, odmotavanje and napomena (the last NAPOMENA lines)."""
     def text(key):
         return (order.get(key) or "").strip()
 
@@ -261,12 +261,14 @@ def file_title(naziv: str) -> str:
     return re.sub(r"\s+", " ", base).strip()[:80]
 
 
-def order_file(docs_dir: Path, broj: int, naziv: str, rel_path: str | None, today: datetime.date) -> Path:
-    """Where order broj's Word file is, or goes: the file the database has for
-    it, else a file of the watcher's naming ('6276 - ...docx') anywhere in
-    the orders folder, else a new one in today's folder as the watcher files
-    them (YYYY/MM/DD/6276 - naziv.docx). A second file for one order would be
-    taken by the watcher for a new order."""
+def order_file(docs_dir: Path, broj: int | str, naziv: str, rel_path: str | None,
+               today: datetime.date) -> Path:
+    """Where order broj's Word file is, or goes (broj 6276, or 6276-1 for a
+    version): the file the database has for it, else a file of the
+    watcher's naming ('6276 - ...docx') anywhere in the orders folder, else
+    a new one in today's folder as the watcher files them (YYYY/MM/DD/6276 -
+    naziv.docx). A second file for one order would be taken by the watcher
+    for a new order."""
     docs_dir = Path(docs_dir)
     if rel_path:
         return docs_dir / rel_path

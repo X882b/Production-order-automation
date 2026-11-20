@@ -2,12 +2,26 @@
 import pytest
 
 from order_text import (
-    KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
+    BROJ_RE, KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT, broj_sort_key,
     alati_text, boja_text, caure_text, datum_potpis_lines, datum_text, kolicina_parts,
     napomena_text, red_word,
     napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, ranije_serije,
     rasecanje_text, rolne_word, split_rolls, stampa_text, stancna_oznake,
 )
+
+@pytest.mark.parametrize("broj, key", [
+    ("6276", 6_276_000), (6276, 6_276_000), ("6276-1", 6_276_001), ("6276-12", 6_276_012),
+    (" 6276-2 ", 6_276_002), ("6276-1000", 0), ("06276", 0), ("abc", 0), ("", 0), (None, 0),
+])
+def test_order_numbers_sort_with_their_versions_after_them(broj, key):
+    assert broj_sort_key(broj) == key
+    assert bool(BROJ_RE.fullmatch(str(broj or "").strip())) == bool(key)
+
+
+def test_a_version_sorts_between_its_order_and_the_next_order():
+    assert sorted(["6277", "6276-2", "6276", "6276-10", "6276-1"], key=broj_sort_key) == \
+        ["6276", "6276-1", "6276-2", "6276-10", "6277"]
+
 
 RUNS = [
     {"datum": "2026-08-12", "doc_number": 6270},

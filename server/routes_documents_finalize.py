@@ -7,6 +7,7 @@ from pydantic import BaseModel
 from sqlalchemy import text
 
 from server.db import engine
+from server.order_numbers import broj_sql, key_of, parse_broj
 
 router = APIRouter()
 
@@ -51,13 +52,18 @@ class FinalizeDoc(BaseModel):
     datum_doc: Optional[date] = None
 
     # Every field of the form as it was saved, so the order can be reopened
-    # in the form exactly as it was (see GET /documents/form/{doc_number})
+    # in the form exactly as it was (see GET /documents/form/{broj})
     form_state: Optional[dict] = None
 
 
 _DOC_PARAMS = {
     "stampa", "napred_slovo", "napred_naziv", "alati", "opis", "napomena", "datum_doc",
 }
+
+
+# What saving answers with: the key, the order's Word file and its number as
+# shown (12345, or 12345-1 for a version)
+_RETURNING = f"RETURNING doc_number, rel_path, {broj_sql()} AS broj"
 
 
 def _set_param(cx, doc_number: int, key: str, value: str) -> None:
@@ -74,7 +80,7 @@ def finalize_document(payload: FinalizeDoc):
     form_state = params.pop("form_state")
     with engine.begin() as cx:
         row = cx.execute(
-            text("""
+            text(f"""
                 UPDATE documents SET
                   machine_id            = :machine_id,
                   sifra                 = :sifra,
@@ -95,14 +101,14 @@ def finalize_document(payload: FinalizeDoc):
                   rok_isporuke          = :rok_isporuke,
                   status                = 'final'
                 WHERE doc_number = :doc_number
-                RETURNING doc_number, rel_path
+                {_RETURNING}
             """),
             params,
         ).mappings().fetchone()
 
         if not row:
             row = cx.execute(
-                text("""
+                text(f"""
                     INSERT INTO documents (
                       doc_number, machine_id, sifra, naziv, dimenzija, sirina,
                       customer_id, material_id, kolicina_text, kolicina_kom_naruceno,
@@ -116,7 +122,7 @@ def finalize_document(payload: FinalizeDoc):
                       :stancna_mm, :rows_long, :rows_wide, :kolicina_note, :rok_isporuke,
                       'final'
                     )
-                    RETURNING doc_number, rel_path
+                    {_RETURNING}
                 """),
                 params,
             ).mappings().fetchone()
@@ -137,18 +143,25 @@ def finalize_document(payload: FinalizeDoc):
             _set_param(cx, payload.doc_number, _FORM_STATE,
                        json.dumps(form_state, ensure_ascii=False))
 
-    # rel_path: the order's Word file in the orders folder, once the watcher has it
-    return {"ok": True, "doc_number": row["doc_number"], "rel_path": row["rel_path"]}
+    # rel_path: the order's Word file in the orders folder, once the watcher has it;
+    # broj: its number as shown (12345, or 12345-1 for a version)
+    return {"ok": True, "doc_number": row["doc_number"], "rel_path": row["rel_path"],
+            "broj": row["broj"]}
 
 
-@router.get("/documents/form/{doc_number}")
-def get_document_form(doc_number: int):
-    """The form's fields as saved with this order. 404 for an order that was
-    never saved from the form (one that only exists as a Word file)."""
+@router.get("/documents/form/{broj}")
+def get_document_form(broj: str):
+    """The form's fields as saved with order broj (6276, or 6276-1 for a
+    version), with the order's key. 404 for an order that was never saved
+    from the form (one that only exists as a Word file)."""
+    number = parse_broj(broj)
+    row, key = None, None
     with engine.connect() as cx:
-        row = cx.execute(text(
-            "SELECT value_text FROM doc_params WHERE doc_number = :n AND key = :k"
-        ), {"n": doc_number, "k": _FORM_STATE}).fetchone()
+        key = key_of(cx, number) if number else None
+        if key is not None:
+            row = cx.execute(text(
+                "SELECT value_text FROM doc_params WHERE doc_number = :n AND key = :k"
+            ), {"n": key, "k": _FORM_STATE}).fetchone()
     if not row or not row[0]:
         raise HTTPException(status_code=404, detail="no saved form for this order")
-    return {"doc_number": doc_number, "form_state": json.loads(row[0])}
+    return {"doc_number": key, "broj": str(number), "form_state": json.loads(row[0])}
