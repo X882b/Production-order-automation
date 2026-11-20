@@ -6,7 +6,7 @@ the parser expects a real order (one field per paragraph).
 import pytest
 
 from formatting import fmt_float_sr, fmt_int_sr
-from order_text import datum_potpis_lines
+from order_text import alati_text, datum_potpis_lines
 from server import watcher_v2_1 as watcher
 
 ORDER = [
@@ -316,6 +316,16 @@ def test_reads_the_date_the_form_writes_at_the_bottom(make_docx):
     assert meta["napomena"] == "hitna isporuka"     # "Datum ... Potpis," ends NAPOMENA
     assert watcher.parse_warnings(meta) == []
 
+
+
+def test_reads_the_die_code_from_the_alati_line_the_form_writes(make_docx):
+    line = "ALATI: " + alati_text("ABC23-09-12345", 96, "XYZ-042S")
+    order = [line if text.startswith("ALATI:") else text for text in ORDER]
+
+    meta = watcher.parse_production_order(make_docx(order))
+
+    assert meta["alati_raw"] == "štancna oznake ABC23-09-12345 (XYZ-042S), Z-96"
+    assert meta["stancna_code"] == "ABC23-09-12345"   # the die maker's code
 
 @pytest.mark.parametrize("iso, expected", [
     ("2025-07-18", {"datum": "18.07.2025", "datum_sort": 20250718}),

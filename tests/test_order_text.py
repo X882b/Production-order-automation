@@ -5,7 +5,7 @@ from order_text import (
     KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
     alati_text, caure_text, datum_potpis_lines, datum_text, napomena_text,
     napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, ranije_serije,
-    rasecanje_text, rolne_word, split_rolls, stampa_text,
+    rasecanje_text, rolne_word, split_rolls, stampa_text, stancna_oznake,
 )
 
 RUNS = [
@@ -115,6 +115,32 @@ def test_odmotavanje_is_empty_when_the_letter_is_at_neither_end():
 ])
 def test_alati_line(oznaka, zuba, expected):
     assert alati_text(oznaka, zuba) == expected
+
+
+@pytest.mark.parametrize("oznaka, zuba, interna, expected", [
+    # the die maker's code, then the shop's own code in brackets
+    ("ABC23-09-12345", 96, "XYZ-042S", "štancna oznake ABC23-09-12345 (XYZ-042S), Z-96"),
+    ("ABC23-09-12345", None, " XYZ-042S ", "štancna oznake ABC23-09-12345 (XYZ-042S)"),
+    ("ABC23-09-12345", 96, "abc23-09-12345", "štancna oznake ABC23-09-12345, Z-96"),   # the same: once
+    ("ABC23-09-12345", 96, "-", "štancna oznake ABC23-09-12345, Z-96"),                # a dash: none
+    ("ABC23-09-12345", 96, None, "štancna oznake ABC23-09-12345, Z-96"),
+    ("", 96, "XYZ-042S", ""),                                    # no maker's code, no line
+])
+def test_alati_line_with_the_shops_own_code(oznaka, zuba, interna, expected):
+    assert alati_text(oznaka, zuba, interna) == expected
+
+
+@pytest.mark.parametrize("oznaka, interna, expected", [
+    ("ABC23-09-12345", "XYZ-042S", "ABC23-09-12345 (XYZ-042S)"),
+    ("ABC23-09-12345", "ABC23-09-12345", "ABC23-09-12345"),
+    ("ABC23-09-12345", "ABC23 -09-12345", "ABC23-09-12345"),
+    ("ABC23-09-12345", "—", "ABC23-09-12345"),
+    ("ABC23-09-12345", "", "ABC23-09-12345"),
+    ("", "XYZ-042S", "XYZ-042S"),          # only the own code (the die summary shows it)
+    (None, None, ""),
+])
+def test_stancna_oznake(oznaka, interna, expected):
+    assert stancna_oznake(oznaka, interna) == expected
 
 
 def test_opis_default_is_the_two_standard_sentences():

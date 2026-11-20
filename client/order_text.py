@@ -120,16 +120,31 @@ def odmotavanje_text(slovo: str, naziv: str) -> str:
     return _napred_ide("Pri odmotavanju gotove rolnice", obrnuto_slovo(slovo, naziv), naziv)
 
 
-def alati_text(oznaka: str, zuba) -> str:
-    """'0000', 93 -> 'štancna oznake 0000, Z-93' (the order's ALATI line).
+def stancna_oznake(oznaka: str, interna: str = "") -> str:
+    """A die's codes as the order names them: the die maker's code, then the
+    shop's own code in brackets, 'ABC25-03-42006 (XYZ-042S)'. The own code
+    is left out when it is empty, a dash, or the same as the maker's."""
+    oznaka, interna = (oznaka or "").strip(), (interna or "").strip()
+    same = "".join(interna.split()).casefold() == "".join(oznaka.split()).casefold()
+    if not interna.strip("-–— ") or same:
+        return oznaka
+    return f"{oznaka} ({interna})" if oznaka else interna
 
-    Without a number of teeth the line ends after the die number.
+
+def alati_text(oznaka: str, zuba, interna: str = "") -> str:
+    """'ABC25-03-42006', 93, 'XYZ-042S' ->
+    'štancna oznake ABC25-03-42006 (XYZ-042S), Z-93' (the order's ALATI line).
+
+    oznaka is the die maker's code (the catalogue's oznaka štancne), interna
+    the shop's own (oznaka proizvođača), see stancna_oznake. No line without
+    the maker's code; without a number of teeth it ends after the codes.
     """
     oznaka = (oznaka or "").strip()
     if not oznaka:
         return ""
+    codes = stancna_oznake(oznaka, interna)
     cylinder = fmt_cylinder_from_zuba(zuba)
-    return f"štancna oznake {oznaka}, {cylinder}" if cylinder else f"štancna oznake {oznaka}"
+    return f"štancna oznake {codes}, {cylinder}" if cylinder else f"štancna oznake {codes}"
 
 
 # ── NAPOMENA: slitting into rolls ────────────────────────────────────────────

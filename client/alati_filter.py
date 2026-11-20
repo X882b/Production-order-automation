@@ -3,6 +3,7 @@
 No Qt here, so the matching rules can be tested on their own.
 """
 from formatting import fmt_cylinder_from_zuba
+from order_text import stancna_oznake
 
 # (column header, key in a /lookup/tools row, kind): one search field each
 COLUMNS = [
@@ -63,12 +64,8 @@ def dimenzija_text(row: dict) -> str:
 
 def summary(row: dict) -> str:
     """One line naming a die: 'ABC25-02-12345 (T-001) · 65 x 140 mm · Z-93 · 3x2'."""
-    name = cell_text(row, "oznaka_stancne")
-    maker = cell_text(row, "oznaka_proizvodjaca")
-    if name and maker:
-        name = f"{name} ({maker})"
     parts = [
-        name or maker,
+        stancna_oznake(cell_text(row, "oznaka_stancne"), cell_text(row, "oznaka_proizvodjaca")),
         dimenzija_text(row),
         fmt_cylinder_from_zuba(row.get("broj_zuba")),
         cell_text(row, "raspored"),

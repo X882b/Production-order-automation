@@ -18,9 +18,6 @@ bottom in the template's order:
 - **next: generate the .docx from the form, in the template's layout**
 
 Open questions for the owner:
-- ALATI line (needed for the .docx): real orders write two codes,
-  `štancna oznake <code> (<second code>), Z-93`; the form writes only
-  `oznaka_stancne`. Which catalogue column goes first, which in brackets?
 - colour-row exceptions the owner wants as presets in ŠIFRA BOJA: ZLATOTISAK
   (`folija zlatna, lepakzafoliju UVH0-0007+“zlatna“ folija KFA 100 Gloss
   Gold,ras. 140l/cm,` on its own station, e.g. VII), SREBRNA and BELA (texts
@@ -48,6 +45,12 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
 - otkucaja/rolna = kom/rolna × die circumference ÷ labels around ÷ 100 (the
   roll's length in tenths of a metre). Checked against the owner's real
   orders (Z-93, 2 around: 1.000 kom → 1476; Z-81, 4 around: 1.225 kom → 788).
+- The order's ALATI line names the die by two codes:
+  `štancna oznake ABC23-09-12345 (XYZ-042S), Z-93`. First the die maker's
+  code (the catalogue's `oznaka_stancne`), in brackets the shop's own code
+  (`oznaka_proizvodjaca`); the bracket is left out when the own code is
+  empty, a dash or the same as the maker's (`stancna_oznake()`). The watcher
+  reads the maker's code as `stancna_code`.
 - The ALATI die search stays at the top of the form, because the chosen die
   fills DIMENZIJA, the quantity and the colour cylinders; the order's ALATI
   line is a separate row lower down. The search has one field per column
@@ -127,7 +130,7 @@ VIII uređaj za lakiranje, UV lak, raster 160l/cm,                  Z-88
 Štampa prema pripremi, prema uzorcima odštampanim kao probni uzorak 04.04.2025.
                                        (bold italic 14pt; the date italic)
 Pri štampi napred ide slovo „D“ u nazivu „Demo“.         (letter and name 14pt, name italic)
-ALATI:           štancna oznake 0000, Z-93
+ALATI:           štancna oznake ABC23-09-12345 (XYZ-042S), Z-93
 OPIS:            Svaki nastavak rolne izvršiti precizno zbog mašinskog etiketiranja.
                  Nastavak koji je fabrički urađen zameniti, odnosno, izbaciti iz rolne.
 NAPOMENA:

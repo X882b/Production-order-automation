@@ -639,7 +639,9 @@ class MainWindow(QMainWindow):
     def _alati_proposal(self) -> str:
         """The order's ALATI line for the chosen die; empty without one."""
         tool = self.chosen_tool or {}
-        return alati_text(tool.get("oznaka_stancne") or "", self.k_broj_zuba)
+        return alati_text(
+            tool.get("oznaka_stancne") or "", self.k_broj_zuba, tool.get("oznaka_proizvodjaca") or "",
+        )
 
     def apply_selected_alat(self, best):
         self.chosen_tool = best
