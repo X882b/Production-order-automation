@@ -81,8 +81,16 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
   `napred_naziv`, `alati`, `opis`, `napomena`, and the order's date as ISO in
   `datum_doc`; the watcher uses `alati`, `opis`, `napomena` and `datum_doc`
   for the same parts of the Word file). An emptied line is removed; fields
-  left out of a request are not touched. Search shows the delivery date, not
-  `datum_doc`.
+  left out of a request are not touched.
+- Search finds orders by their date: the index has `datum` (as shown) and
+  `datum_sort` (YYYYMMDD, the watcher's `_search_date_fields`). A day
+  (18.07.2025) or month (07.2025) typed in the search becomes a filter on it
+  (`parse_query` in `server/routes_search.py`); with two or more, the range
+  between them; the rest is searched as text. Results come newest first. The
+  API makes `datum_sort` filterable and sortable on its first search. Orders
+  saved only from the form reach the index when the watcher starts
+  (`sync_search_index`); once the form writes the Word file, the watcher
+  will index it when it arrives.
 - Save also stores every field of the form as JSON in `doc_params` key
   `form_state` (`MainWindow.form_state()`, no schema change).
   `GET /documents/form/{n}` returns it; "Otvori nalog..." and the search's
@@ -153,7 +161,7 @@ quantity, ask the owner which is right before changing a formula.
 - Check changes before pushing: `pytest`, `pyflakes`, and for form changes
   drive the form headless (QT_QPA_PLATFORM=offscreen) against a test stack
   (Postgres 16 + the API) and look at a screenshot.
-- After a server change, the running stack needs `docker compose restart api`
-  (the code is mounted, not baked in); requirements changes need
+- After a server change, the running stack needs `docker compose restart api
+  watcher` (the code is mounted, not baked in); requirements changes need
   `docker compose up -d --build`. A changed schema file is applied again
   with the README's psql command (the schema files are safe to re-run).

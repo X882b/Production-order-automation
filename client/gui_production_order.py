@@ -1163,6 +1163,21 @@ class ProposedText(QWidget):
 # AlatiSearch – the die catalogue with a search field per column
 # ---------------------------------------------------------------------------
 
+_SORT_ROLE = Qt.UserRole + 1
+
+
+class _DateItem(QTableWidgetItem):
+    """A table cell showing a date as 18.07.2025 that sorts by the date
+    (sort_key YYYYMMDD; 0, no date, sorts first)."""
+
+    def __init__(self, text: str, sort_key: int):
+        super().__init__(text)
+        self.setData(_SORT_ROLE, sort_key)
+
+    def __lt__(self, other):
+        return (self.data(_SORT_ROLE) or 0) < (other.data(_SORT_ROLE) or 0)
+
+
 class _NumberItem(QTableWidgetItem):
     """A table cell that sorts as a number."""
 
@@ -1341,7 +1356,13 @@ class NaloziDialog(QDialog):
         self.open_in_form = False   # reopen the chosen order, not start a repeat of it
 
         self.search_edit = QLineEdit()
-        self.search_edit.setPlaceholderText("Pretraži naloge (broj, naziv, šifra, naručilac...)")
+        self.search_edit.setPlaceholderText(
+            "Pretraži naloge (broj, naziv, šifra, naručilac, datum 18.07.2025, mesec 07.2025...)"
+        )
+        self.search_edit.setToolTip(
+            "Datum (18.07.2025) ili mesec (07.2025) nalazi naloge sa tim datumom naloga.\n"
+            "Sa dva datuma: sve između njih."
+        )
         self.search_edit.textEdited.connect(lambda _: self.search_timer.start())
 
         self.search_timer = QTimer(self)
@@ -1356,9 +1377,9 @@ class NaloziDialog(QDialog):
         top_row.addWidget(self.search_edit, 1)
         top_row.addWidget(btn_close)
 
-        self.table = QTableWidget(0, 6)
+        self.table = QTableWidget(0, 7)
         self.table.setHorizontalHeaderLabels([
-            "Broj", "Naziv", "Šifra", "Naručilac", "Dimenzija", "Rok",
+            "Broj", "Datum", "Naziv", "Šifra", "Naručilac", "Dimenzija", "Rok",
         ])
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -1368,6 +1389,8 @@ class NaloziDialog(QDialog):
         self.table.setSortingEnabled(True)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
+        self.table.sortByColumn(1, Qt.DescendingOrder)   # newest orders first
         self.table.cellDoubleClicked.connect(lambda row, _col: self.on_fill_form())
 
         self.status_lbl = QLabel("")
@@ -1398,7 +1421,10 @@ class NaloziDialog(QDialog):
 
     def run_search(self):
         try:
-            self.rows = get_json("/documents/search", {"q": self.search_edit.text().strip()})
+            self.rows = get_json("/documents/search", {
+                "q": self.search_edit.text().strip(),
+                "limit": 200,
+            })
             self.status_lbl.setText(f"{len(self.rows)} naloga")
         except Exception as e:
             self.rows = []
@@ -1413,11 +1439,13 @@ class NaloziDialog(QDialog):
         for i, row in enumerate(self.rows):
             rok = row.get("rok_isporuke") or ""
             try:
-                rok = _date.fromisoformat(rok).strftime("%d.%m.%Y")
+                rok_day = _date.fromisoformat(rok)
+                rok = (rok_day.strftime("%d.%m.%Y"), int(rok_day.strftime("%Y%m%d")))
             except ValueError:
-                pass
+                rok = (rok, 0)
             values = [
                 row.get("broj_naloga"),
+                (row.get("datum") or "", row.get("datum_sort") or 0),   # the order's date
                 row.get("naziv") or "",
                 row.get("sifra") or "",
                 row.get("narucilac") or "",
@@ -1425,11 +1453,13 @@ class NaloziDialog(QDialog):
                 rok,
             ]
             for col, value in enumerate(values):
-                item = QTableWidgetItem()
                 if col == 0:
+                    item = QTableWidgetItem()
                     item.setData(Qt.DisplayRole, value)   # numeric sort
+                elif isinstance(value, tuple):
+                    item = _DateItem(*value)
                 else:
-                    item.setText(str(value))
+                    item = QTableWidgetItem(str(value))
                 item.setData(Qt.UserRole, i)
                 self.table.setItem(i, col, item)
 

@@ -825,6 +825,17 @@ def update_existing_doc(
     print(f"[watcher] updated #{num} → {rel_path}")
 
 
+def _search_date_fields(iso: str | None) -> dict:
+    """The order's date for the search index: 'datum' as the order writes
+    it, to show; 'datum_sort' as YYYYMMDD, to filter and sort by (left out
+    when the order has no date, so such orders sort last)."""
+    try:
+        day = datetime.date.fromisoformat(iso or "")
+    except ValueError:
+        return {"datum": ""}
+    return {"datum": day.strftime("%d.%m.%Y"), "datum_sort": int(day.strftime("%Y%m%d"))}
+
+
 def _index_meili(
     num: int,
     rel_path: str,
@@ -842,6 +853,7 @@ def _index_meili(
         "narucilac":   meta.get("narucilac", ""),
         "alati":       meta.get("alati_raw", ""),
         "rok_isporuke": meta.get("rok_isporuke", ""),
+        **_search_date_fields(meta.get("datum_doc")),
         "rel_path":    rel_path,
         "content_excerpt": full_text[:2000],
     }
@@ -1061,6 +1073,7 @@ def sync_search_index() -> None:
             "narucilac":    s(p.get("narucilac")),
             "alati":        s(p.get("alati")),
             "rok_isporuke": s(d["rok_isporuke"]),
+            **_search_date_fields(p.get("datum_doc")),
             "rel_path":     s(d["rel_path"]),
             "content_excerpt": s(d["content"])[:2000],
         }

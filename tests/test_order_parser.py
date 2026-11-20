@@ -316,6 +316,15 @@ def test_reads_the_date_the_form_writes_at_the_bottom(make_docx):
     assert meta["napomena"] == "hitna isporuka"     # "Datum ... Potpis," ends NAPOMENA
     assert watcher.parse_warnings(meta) == []
 
+
+@pytest.mark.parametrize("iso, expected", [
+    ("2025-07-18", {"datum": "18.07.2025", "datum_sort": 20250718}),
+    (None, {"datum": ""}),          # no date: nothing to filter or sort by
+    ("", {"datum": ""}),
+])
+def test_search_index_date_fields(iso, expected):
+    assert watcher._search_date_fields(iso) == expected
+
 # ── order numbers and file names ─────────────────────────────────────────────
 
 @pytest.mark.parametrize("stem, expected", [

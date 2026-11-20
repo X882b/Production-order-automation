@@ -29,8 +29,10 @@ the product and die catalogues.
   production-run dates per product, builds the order's text lines word for
   word (which letter of the name is printed first, the ALATI line, OPIS,
   NAPOMENA with the split into rolls and each roll's counter length, the
-  order's date and the line to sign on), and searches past orders to open
-  the Word file or reuse it for a repeat job.
+  order's date and the line to sign on), and searches past orders, newest
+  first, by text or by the order's date (a day such as 18.07.2025 or a
+  month such as 07.2025), to open the Word file or reuse it for a repeat
+  job.
   The lines it writes can be edited by hand; an edited line stays as typed
   until its "Auto" button puts the automatic text back. Saving keeps every
   field with the order, so an order can be reopened exactly as it was
@@ -117,7 +119,7 @@ interactive docs are at <http://localhost:8000/docs>.
 | GET | `/documents/form/{doc_number}` | The form as saved with an order, to reopen it |
 | POST | `/documents/colors/save` | Replace an order's colour stations |
 | GET | `/documents/colors/{doc_number}` | An order's colour stations |
-| GET | `/documents/search?q=` | Search orders (Meilisearch) |
+| GET | `/documents/search?q=` | Search orders (Meilisearch), newest first; a day (`18.07.2025`) or month (`07.2025`) in `q` keeps the orders of that date |
 | GET | `/lookup/{machines,customers,materials,products,tools}?q=` | Autocomplete lookups |
 | GET, POST | `/series` | Production-run dates for a product code |
 | DELETE | `/series/{id}` | Remove a run date |
@@ -180,10 +182,9 @@ make watcher   # follow the watcher log
 ```
 
 Copy a `.docx` order into `DOCS_DIR` and it appears in the watcher log
-within a few seconds. On a fresh install the watcher logs an
-`index_not_found` error at start-up and `/documents/search` returns 503
-until the first order is processed; this is harmless, as the search index
-is created with the first order.
+within a few seconds. On a fresh install the watcher may log an
+`index_not_found` error at start-up; this is harmless, as the search index
+is created by the first search or the first order.
 
 After changing `server/requirements.txt`, rebuild and restart with
 `docker compose up -d --build`.
