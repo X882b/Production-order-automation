@@ -47,13 +47,17 @@ class FinalizeDoc(BaseModel):
     alati: Optional[str] = None
     opis: Optional[str] = None
     napomena: Optional[str] = None
+    # The order's date at its bottom
+    datum_doc: Optional[date] = None
 
     # Every field of the form as it was saved, so the order can be reopened
     # in the form exactly as it was (see GET /documents/form/{doc_number})
     form_state: Optional[dict] = None
 
 
-_TEXT_PARAMS = {"stampa", "napred_slovo", "napred_naziv", "alati", "opis", "napomena"}
+_DOC_PARAMS = {
+    "stampa", "napred_slovo", "napred_naziv", "alati", "opis", "napomena", "datum_doc",
+}
 
 
 def _set_param(cx, doc_number: int, key: str, value: str) -> None:
@@ -118,9 +122,10 @@ def finalize_document(payload: FinalizeDoc):
             ).mappings().fetchone()
 
         # A line that's given is stored, an emptied one removed; lines the
-        # request leaves out stay as they are
-        for key in sorted(_TEXT_PARAMS & payload.model_fields_set):
-            value = (params[key] or "").strip()
+        # request leaves out stay as they are. Dates as ISO, like the watcher.
+        for key in sorted(_DOC_PARAMS & payload.model_fields_set):
+            value = params[key]
+            value = value.isoformat() if isinstance(value, date) else (value or "").strip()
             if value:
                 _set_param(cx, payload.doc_number, key, value)
             else:

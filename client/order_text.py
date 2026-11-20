@@ -219,3 +219,36 @@ def rasecanje_text(caure: str, groups, stancna_mm, rows_long, max_d: str) -> str
 def napomena_text(*lines: str) -> str:
     """The NAPOMENA text: its non-empty lines, one per line."""
     return "\n".join(line.strip() for line in lines if line and line.strip())
+
+
+# ── The bottom: the order's date, and a line to sign by hand ─────────────────
+
+DATUM_LABEL = "Datum"
+POTPIS_LABEL = "Potpis,"
+POTPIS_LINIJA = "-" * 32    # the order is signed by hand; no name is printed
+
+
+def datum_text(iso: str) -> str:
+    """'2025-07-18' -> '18.07.2025.', the order's date as its bottom writes
+    it; anything else is returned as it is."""
+    try:
+        return datetime.date.fromisoformat(iso).strftime("%d.%m.%Y.")
+    except (TypeError, ValueError):
+        return str(iso or "")
+
+
+def datum_potpis_lines(iso: str) -> list[str]:
+    """The order's last three lines, padded with spaces as in the template so
+    that "Potpis," and the line to sign on sit at the right:
+
+        9 spaces + 'Datum' + 94 spaces + 'Potpis,'    (not bold)
+        6 spaces + '18.07.2025.'                       (bold)
+        101 spaces + 32 dashes                         (bold)
+
+    The watcher reads the date line as the order's date (datum_doc).
+    """
+    return [
+        " " * 9 + DATUM_LABEL + " " * 94 + POTPIS_LABEL,
+        " " * 6 + datum_text(iso),
+        " " * 101 + POTPIS_LINIJA,
+    ]

@@ -6,6 +6,7 @@ the parser expects a real order (one field per paragraph).
 import pytest
 
 from formatting import fmt_float_sr, fmt_int_sr
+from order_text import datum_potpis_lines
 from server import watcher_v2_1 as watcher
 
 ORDER = [
@@ -305,6 +306,15 @@ def test_reads_the_quantity_line_the_gui_writes(m_dobrih, kom, kom_po_m):
     assert q["kolicina_kom_naruceno"] == kom
     assert q["kolicina_kom_po_m"] == pytest.approx(round(kom_po_m, 2))
 
+
+
+def test_reads_the_date_the_form_writes_at_the_bottom(make_docx):
+    # The order's last lines as the form writes them, spaces included
+    meta = watcher.parse_production_order(make_docx(ORDER[:-2] + datum_potpis_lines("2025-07-18")))
+
+    assert meta["datum_doc"] == "2025-07-18"
+    assert meta["napomena"] == "hitna isporuka"     # "Datum ... Potpis," ends NAPOMENA
+    assert watcher.parse_warnings(meta) == []
 
 # ── order numbers and file names ─────────────────────────────────────────────
 

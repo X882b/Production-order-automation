@@ -28,8 +28,9 @@ the product and die catalogues.
   quantity and die layout, edits colour/plate stations, tracks
   production-run dates per product, builds the order's text lines word for
   word (which letter of the name is printed first, the ALATI line, OPIS,
-  NAPOMENA with the split into rolls and each roll's counter length), and
-  searches past orders to open the Word file or reuse it for a repeat job.
+  NAPOMENA with the split into rolls and each roll's counter length, the
+  order's date and the line to sign on), and searches past orders to open
+  the Word file or reuse it for a repeat job.
   The lines it writes can be edited by hand; an edited line stays as typed
   until its "Auto" button puts the automatic text back. Saving keeps every
   field with the order, so an order can be reopened exactly as it was

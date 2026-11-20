@@ -3,9 +3,9 @@ import pytest
 
 from order_text import (
     KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
-    alati_text, caure_text, napomena_text, napred_ide_text, obrnuto_slovo,
-    odmotavanje_text, otkucaji, ranije_serije, rasecanje_text, rolne_word,
-    split_rolls, stampa_text,
+    alati_text, caure_text, datum_potpis_lines, datum_text, napomena_text,
+    napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, ranije_serije,
+    rasecanje_text, rolne_word, split_rolls, stampa_text,
 )
 
 RUNS = [
@@ -209,3 +209,23 @@ def test_rasecanje_line_is_empty_without_groups():
 
 def test_napomena_joins_the_lines_given():
     assert napomena_text("A,", "", "  ", "Upakovati u kutije.\n") == "A,\nUpakovati u kutije."
+
+
+# ── the bottom: date and signature ───────────────────────────────────────────
+
+@pytest.mark.parametrize("iso, expected", [
+    ("2025-07-18", "18.07.2025."),
+    ("2026-01-05", "05.01.2026."),
+    ("", ""),
+    (None, ""),
+])
+def test_datum_text(iso, expected):
+    assert datum_text(iso) == expected
+
+
+def test_date_and_signature_lines_as_in_the_order_template():
+    datum, date, line = datum_potpis_lines("2025-07-18")
+
+    assert datum == " " * 9 + "Datum" + " " * 94 + "Potpis,"
+    assert date == "      18.07.2025."
+    assert line == " " * 101 + "-" * 32

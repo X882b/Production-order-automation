@@ -9,19 +9,16 @@ the orders folder. See README.md for setup.
 ## Where we are
 
 The goal is for the form to produce the Word production order, word for word
-and laid out like the shop's order template. The form is being built top to
+and laid out like the shop's order template. The form was built top to
 bottom in the template's order:
 
-- done: everything down to ŠTAMPA PREMA PRIPREMI, then NAPRED IDE, ALATI
-  (u nalogu), OPIS and NAPOMENA; the die search has one field per column;
-  every field is saved with the order and the order can be reopened
-- **next: the date and signature at the bottom** (see the template outline)
-- then: generate the .docx from the form, in the template's layout
+- done: the whole template, top to bottom, down to the date and signature;
+  the die search has one field per column; every field is saved with the
+  order and the order can be reopened
+- **next: generate the .docx from the form, in the template's layout**
 
 Open questions for the owner:
-- date and signature: which date (today? editable?), and is a name printed
-  under "Potpis," or only the dashed line for a handwritten signature?
-- ALATI line: real orders write two codes,
+- ALATI line (needed for the .docx): real orders write two codes,
   `štancna oznake <code> (<second code>), Z-93`; the form writes only
   `oznaka_stancne`. Which catalogue column goes first, which in brackets?
 - colour-row exceptions the owner wants as presets in ŠIFRA BOJA: ZLATOTISAK
@@ -75,10 +72,17 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
   (`ranije_serije`), so it does not change when the order is saved or
   reopened later. The series dates are shared per šifra; text typed into
   the Štampa line belongs to that order only.
+- The order's date (bottom left) is today on a new order and after "New
+  number", and can be changed. "Potpis," has only the dashed line: the
+  order is signed by hand, no name is printed. `datum_potpis_lines()` keeps
+  the template's spacing of the three bottom lines for the .docx. A form
+  saved before the date existed reopens with today's.
 - The form saves text lines in `doc_params` (keys `stampa`, `napred_slovo`,
-  `napred_naziv`, `alati`, `opis`, `napomena`; the watcher uses `alati`,
-  `opis` and `napomena` for the same lines of the Word file). An emptied line
-  is removed; fields left out of a request are not touched.
+  `napred_naziv`, `alati`, `opis`, `napomena`, and the order's date as ISO in
+  `datum_doc`; the watcher uses `alati`, `opis`, `napomena` and `datum_doc`
+  for the same parts of the Word file). An emptied line is removed; fields
+  left out of a request are not touched. Search shows the delivery date, not
+  `datum_doc`.
 - Save also stores every field of the form as JSON in `doc_params` key
   `form_state` (`MainWindow.form_state()`, no schema change).
   `GET /documents/form/{n}` returns it; "Otvori nalog..." and the search's

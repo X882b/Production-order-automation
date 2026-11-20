@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, QTimer, QDate, QUrl, QEvent, Signal
 from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QLabel, QPushButton,
-    QVBoxLayout, QHBoxLayout, QFormLayout, QLineEdit, QMessageBox,
+    QVBoxLayout, QHBoxLayout, QFormLayout, QGridLayout, QLineEdit, QMessageBox,
     QComboBox, QDateEdit, QDialog, QDialogButtonBox,
     QTableWidget, QTableWidgetItem, QAbstractItemView,
     QHeaderView, QPlainTextEdit, QScrollArea, QInputDialog
@@ -23,6 +23,7 @@ from formatting import (
 )
 from order_text import (
     OPIS_DEFAULT, NAPOMENA_DEFAULT, KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT,
+    DATUM_LABEL, POTPIS_LABEL, POTPIS_LINIJA,
     napred_ide_text, alati_text, stampa_text, ranije_serije,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
     caure_text,
@@ -370,6 +371,28 @@ class MainWindow(QMainWindow):
         napomena_widget = QWidget()
         napomena_widget.setLayout(napomena_layout)
 
+        # ---- The bottom: the order's date, and a line to sign by hand ----
+        self.datum_edit = QDateEdit()
+        self.datum_edit.setCalendarPopup(True)
+        self.datum_edit.setDisplayFormat("dd.MM.yyyy")
+        self.datum_edit.setDate(QDate.currentDate())
+        self.datum_edit.setToolTip("Datum naloga. Za novi broj postavlja se današnji datum.")
+
+        potpis_linija = QLabel(POTPIS_LINIJA)
+        potpis_linija.setToolTip("Nalog se potpisuje rukom.")
+
+        # Laid out as at the bottom of the order: the date left, the signature right
+        bottom_layout = QGridLayout()
+        bottom_layout.setContentsMargins(0, 12, 0, 0)
+        bottom_layout.addWidget(QLabel(DATUM_LABEL), 0, 0)
+        bottom_layout.addWidget(QLabel(POTPIS_LABEL), 0, 2)
+        bottom_layout.addWidget(self.datum_edit, 1, 0)
+        bottom_layout.addWidget(potpis_linija, 2, 2)
+        bottom_layout.setColumnStretch(1, 1)
+
+        bottom_widget = QWidget()
+        bottom_widget.setLayout(bottom_layout)
+
         # ---- Form ----
         form = QFormLayout()
         form.addRow("MAŠINA:", self.machine_cb)
@@ -388,6 +411,7 @@ class MainWindow(QMainWindow):
         form.addRow("ALATI (u nalogu):", self.alati_nalog_edit)
         form.addRow("OPIS:", self.opis_edit)
         form.addRow("NAPOMENA:", napomena_widget)
+        form.addRow(bottom_widget)
 
         center = QWidget()
         center.setLayout(form)
@@ -445,6 +469,7 @@ class MainWindow(QMainWindow):
             self.doc_number = num
             self.title_lbl.setText(f"NALOG ZA PROIZVODNJU {num}")
             self.rok_edit.setDate(QDate.currentDate().addDays(7))
+            self.datum_edit.setDate(QDate.currentDate())   # a new order is dated today
             if self.sifra_edit.text().strip():
                 # which of the product's runs count as earlier depends on the order
                 self.refresh_stampa_display()
@@ -884,6 +909,7 @@ class MainWindow(QMainWindow):
             "alati":                 self.alati_nalog_edit.text().strip() or None,
             "opis":                  self.opis_edit.toPlainText().strip() or None,
             "napomena":              self.napomena_full_text() or None,
+            "datum_doc":             self.datum_edit.date().toString(Qt.ISODate),
             # every field as it is now, to reopen this order as saved
             "form_state":            self.form_state(),
         }
@@ -965,6 +991,7 @@ class MainWindow(QMainWindow):
                 "odmotavanje": self.odmotavanje_edit.text(),
                 "ostalo": self.napomena_ostalo_edit.toPlainText(),
             },
+            "datum": self.datum_edit.date().toString(Qt.ISODate),
         }
 
     def apply_form_state(self, state: dict):
@@ -1017,6 +1044,9 @@ class MainWindow(QMainWindow):
             day = QDate.fromString(iso or "", Qt.ISODate)
             if day.isValid():
                 edit.setDate(day)
+        # An order saved before the form had a date gets today's, as a new one
+        day = QDate.fromString(state.get("datum") or "", Qt.ISODate)
+        self.datum_edit.setDate(day if day.isValid() else QDate.currentDate())
 
         self.color_rows = copy.deepcopy(state.get("boje") or [])
         self.refresh_colors_preview()
