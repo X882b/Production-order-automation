@@ -1,4 +1,5 @@
 import copy
+import datetime
 import os
 import sys
 from pathlib import Path
@@ -26,7 +27,7 @@ from order_text import (
     DATUM_LABEL, POTPIS_LABEL, POTPIS_LINIJA,
     napred_ide_text, alati_text, stampa_text, ranije_serije,
     odmotavanje_text, otkucaji, split_rolls, rasecanje_text, napomena_text,
-    caure_text,
+    caure_text, kolicina_parts,
 )
 import alati_filter
 
@@ -107,6 +108,10 @@ class MainWindow(QMainWindow):
         btn_save = QPushButton("Save")
         btn_save.clicked.connect(self.on_save)
 
+        btn_word = QPushButton("Word nalog")
+        btn_word.setToolTip("Sačuvaj nalog i napravi njegov Word fajl u folderu naloga")
+        btn_word.clicked.connect(self.on_word)
+
         btn_search = QPushButton("Pretraži naloge...")
         btn_search.clicked.connect(self.on_search_nalozi)
 
@@ -120,6 +125,7 @@ class MainWindow(QMainWindow):
         top_btns.addStretch()
         top_btns.addWidget(btn_new)
         top_btns.addWidget(btn_save)
+        top_btns.addWidget(btn_word)
 
         # ---- Machine dropdown ----
         self.machine_cb = QComboBox()
@@ -568,7 +574,7 @@ class MainWindow(QMainWindow):
             # Nothing computed -> don't keep values from an earlier tool/quantity
             self.k_kom_po_m = self.k_m_dobrih = self.k_add_m = None
             if kom is not None:
-                self.kolicina_display.setText(f"({fmt_int_sr(kom)} kom)")
+                self.kolicina_display.setText("".join(self._kolicina_parts()))
             elif self.kolicina_kom_input.text().strip() == "":
                 self.kolicina_display.clear()
             self.refresh_napomena()
@@ -583,9 +589,13 @@ class MainWindow(QMainWindow):
         self.k_m_dobrih  = m_dobrih
         self.k_add_m     = add_m
 
-        line = f"{m_dobrih} m dobrih ({fmt_int_sr(kom)} kom) ({fmt_float_sr(kom_po_m, 2)} kom/m)"
-        self.kolicina_display.setText(line)
+        self.kolicina_display.setText("".join(self._kolicina_parts()))
         self.refresh_napomena()
+
+    def _kolicina_parts(self):
+        """The KOLIČINA line as the order prints it, in its two parts."""
+        return kolicina_parts(self.k_m_dobrih, self.k_kom_naruceno, self.k_kom_po_m,
+                              self.k_rows_wide, self.k_note)
 
     def on_kolicina_kom_changed(self):
         self.recompute_kolicina_display()
@@ -878,9 +888,15 @@ class MainWindow(QMainWindow):
     # ------------------------------------------------------------------
 
     def on_save(self):
+        res = self.save_order()
+        if res is not None:
+            QMessageBox.information(self, "Saved", f"Saved document #{res['doc_number']}")
+
+    def save_order(self):
+        """Save the order; the API's answer, or None after saying why not."""
         if not self.doc_number:
             QMessageBox.warning(self, "Missing number", "Click 'New number' first.")
-            return
+            return None
 
         machine_name = self.machine_cb.currentText()
         machine_id   = self.machine_map.get(machine_name)
@@ -944,9 +960,76 @@ class MainWindow(QMainWindow):
                 self.load_series(sifra)
 
             self._saved_state = self.form_state()
-            QMessageBox.information(self, "Saved", f"Saved document #{res['doc_number']}")
+            return res
         except Exception as e:
             QMessageBox.critical(self, "Save error", str(e))
+            return None
+
+    # ------------------------------------------------------------------
+    # The Word file
+    # ------------------------------------------------------------------
+
+    def word_order(self) -> dict:
+        """The order's values for its Word file (see order_docx.order_lines)."""
+        masina = self.machine_cb.currentText()
+        return {
+            "broj": int(self.doc_number),
+            "masina": "" if masina not in self.machine_map else masina,
+            "sifra": self.sifra_edit.text(),
+            "naziv": self.naziv_edit.text(),
+            "dimenzija": self.dim_edit.text(),
+            "materijal": self.mat_edit.text(),
+            "sirina": self.sirina_edit.text(),
+            "narucilac": self.narucilac_edit.text(),
+            "kolicina": self._kolicina_parts(),
+            "rok": self.rok_edit.date().toString(Qt.ISODate),
+            "boje": copy.deepcopy(self.color_rows),
+            "stampa": self.stampa_edit.text(),
+            "napred": napred_ide_text(self.napred_slovo_edit.text(), self.napred_naziv_edit.text()),
+            "alati": self.alati_nalog_edit.text(),
+            "opis": self.opis_edit.toPlainText(),
+            "rasecanje": self.rasecanje_edit.text(),
+            "odmotavanje": self.odmotavanje_edit.text(),
+            "napomena": self.napomena_ostalo_edit.toPlainText(),
+            "datum": self.datum_edit.date().toString(Qt.ISODate),
+        }
+
+    def on_word(self):
+        """Save the order, write its Word file where the watcher files orders,
+        and open it."""
+        try:
+            import order_docx   # needs python-docx: pip install -r requirements.txt
+        except ImportError as e:
+            QMessageBox.critical(self, "Word nalog",
+                                 f"Word fajl ne može da se napravi: {e}\n\npip install -r requirements.txt")
+            return
+        if not DOCS_DIR.is_dir():   # the watcher's folder; never make one somewhere else
+            QMessageBox.critical(self, "Word nalog",
+                                 f"Folder naloga ne postoji:\n{DOCS_DIR}\n\nProverite DOCS_DIR u .env.")
+            return
+        res = self.save_order()
+        if res is None:
+            return
+        num = int(self.doc_number)
+        try:
+            path = order_docx.order_file(DOCS_DIR, num, self.naziv_edit.text(),
+                                         res.get("rel_path"), datetime.date.today())
+        except OSError as e:
+            QMessageBox.critical(self, "Word nalog", f"Folder naloga nije dostupan:\n{DOCS_DIR}\n\n{e}")
+            return
+        if path.exists():
+            answer = QMessageBox.question(
+                self, "Word nalog",
+                f"Nalog {num} već ima Word fajl:\n{path}\n\nZameniti ga nalogom iz forme?",
+            )
+            if answer != QMessageBox.Yes:
+                return
+        try:
+            order_docx.write_order(path, self.word_order())
+        except Exception as e:
+            QMessageBox.critical(self, "Word nalog", f"Word fajl nije napravljen:\n{path}\n\n{e}")
+            return
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(path)))
 
     # ------------------------------------------------------------------
     # The whole form, saved with an order and reopened from it

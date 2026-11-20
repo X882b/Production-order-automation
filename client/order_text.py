@@ -7,7 +7,7 @@ import datetime
 import math
 import re
 
-from formatting import fmt_cylinder_from_zuba, fmt_int_sr
+from formatting import fmt_cylinder_from_zuba, fmt_float_sr, fmt_int_sr
 
 # OPIS is the same on nearly every order; the form starts with it and lets
 # the user change it
@@ -146,6 +146,73 @@ def alati_text(oznaka: str, zuba, interna: str = "") -> str:
     cylinder = fmt_cylinder_from_zuba(zuba)
     return f"štancna oznake {codes}, {cylinder}" if cylinder else f"štancna oznake {codes}"
 
+
+
+# ── KOLIČINA and the colour rows ─────────────────────────────────────────────
+
+def red_word(n: int) -> str:
+    """Serbian plural after a number: 1 red, 3 reda, 5 redova (11–14 redova)."""
+    if n % 10 == 1 and n % 100 != 11:
+        return "red"
+    if 2 <= n % 10 <= 4 and not 12 <= n % 100 <= 14:
+        return "reda"
+    return "redova"
+
+
+def kolicina_parts(m_dobrih, kom, kom_po_m, lanes, note: str = "") -> tuple[str, str]:
+    """The KOLIČINA line in the two parts the order prints differently:
+    4930, 100000, 20.32, 3 -> ('4930 m dobrih (100.000 kom)', ' (20,32 kom/m) - 3 reda');
+    the second part is printed smaller. Without the die: ('(100.000 kom)', '').
+    A note follows, after " - " unless it starts with a dash itself.
+    """
+    if m_dobrih and kom and kom_po_m:
+        main = f"{m_dobrih} m dobrih ({fmt_int_sr(kom)} kom)"
+        small = f" ({fmt_float_sr(kom_po_m, 2)} kom/m)"
+        if lanes:
+            small += f" - {lanes} {red_word(lanes)}"
+    elif kom:
+        main, small = f"({fmt_int_sr(kom)} kom)", ""
+    else:
+        main, small = "", ""
+    note = (note or "").strip()
+    if note:
+        small += (" " if note.startswith("-") else " - ") + note
+    return main, small
+
+
+LAK_KLISE = "uređaj za lakiranje"   # the colour table's code for the lacquer unit
+
+
+def _raster(raster: str) -> str:
+    """'390', '390 l/cm' -> '390l/cm', as the order writes it."""
+    raster = re.sub(r"\s+(?=l/cm)", "", (raster or "").strip())
+    return f"{raster}l/cm" if raster.isdigit() else raster
+
+
+def boja_text(row: dict) -> tuple[str, str]:
+    """A colour row as the order writes it, in two parts: the row up to its
+    last comma, and the cylinder (Z-93) that the order sets at the right:
+    ('I kliše oznake 0000, C, boja Process Cyan, raster 390l/cm,', 'Z-93');
+    the lacquer unit: ('VIII uređaj za lakiranje, UV lak, raster 160l/cm,', 'Z-88').
+    A note follows the cylinder; parts left empty are left out.
+    """
+    pos = (row.get("position_label") or "").strip()
+    klise = (row.get("klise_code") or "").strip()
+    color = (row.get("color_text") or "").strip()
+    raster = _raster(row.get("raster"))
+    if klise.casefold() == LAK_KLISE:
+        parts = [f"{pos} {LAK_KLISE}".strip(), color or "UV lak"]
+    else:
+        if color and not color.casefold().startswith("boja "):
+            color = f"boja {color}"
+        head = f"{pos} kliše oznake {klise}" if klise else pos
+        parts = [head, (row.get("variant") or "").strip(), color]
+    if raster:
+        parts.append(f"raster {raster}")
+    text = ", ".join(part for part in parts if part)
+    tail = ", ".join(part for part in ((row.get("cylinder") or "").strip(),
+                                       (row.get("note") or "").strip()) if part)
+    return (text + "," if text else ""), tail
 
 # ── NAPOMENA: slitting into rolls ────────────────────────────────────────────
 

@@ -3,7 +3,8 @@ import pytest
 
 from order_text import (
     KOM_PO_ROLNI_DEFAULT, MAX_D_DEFAULT, NAPOMENA_DEFAULT, OPIS_DEFAULT,
-    alati_text, caure_text, datum_potpis_lines, datum_text, napomena_text,
+    alati_text, boja_text, caure_text, datum_potpis_lines, datum_text, kolicina_parts,
+    napomena_text, red_word,
     napred_ide_text, obrnuto_slovo, odmotavanje_text, otkucaji, ranije_serije,
     rasecanje_text, rolne_word, split_rolls, stampa_text, stancna_oznake,
 )
@@ -255,3 +256,44 @@ def test_date_and_signature_lines_as_in_the_order_template():
     assert datum == " " * 9 + "Datum" + " " * 94 + "Potpis,"
     assert date == "      18.07.2025."
     assert line == " " * 101 + "-" * 32
+
+
+# ── KOLIČINA and the colour rows ─────────────────────────────────────────────
+
+@pytest.mark.parametrize("n, word", [
+    (1, "red"), (2, "reda"), (4, "reda"), (5, "redova"), (11, "redova"), (12, "redova"),
+    (21, "red"), (22, "reda"), (25, "redova"),
+])
+def test_red_word(n, word):
+    assert red_word(n) == word
+
+
+@pytest.mark.parametrize("args, parts", [
+    ((4930, 100_000, 20.32, 3), ("4930 m dobrih (100.000 kom)", " (20,32 kom/m) - 3 reda")),
+    ((4930, 100_000, 20.32, 1), ("4930 m dobrih (100.000 kom)", " (20,32 kom/m) - 1 red")),
+    ((4930, 100_000, 20.32, None), ("4930 m dobrih (100.000 kom)", " (20,32 kom/m)")),
+    ((None, 100_000, None, None), ("(100.000 kom)", "")),          # no die chosen
+    ((None, None, None, None), ("", "")),
+    ((4930, 100_000, 20.32, 3, "hitno"), ("4930 m dobrih (100.000 kom)", " (20,32 kom/m) - 3 reda - hitno")),
+    ((4930, 100_000, 20.32, 3, "-po roli"), ("4930 m dobrih (100.000 kom)", " (20,32 kom/m) - 3 reda -po roli")),
+])
+def test_kolicina_parts(args, parts):
+    assert kolicina_parts(*args) == parts
+
+
+@pytest.mark.parametrize("row, parts", [
+    ({"position_label": "I", "klise_code": "0000", "variant": "C", "color_text": "Process Cyan",
+      "raster": "390 l/cm", "cylinder": "Z-93"},
+     ("I kliše oznake 0000, C, boja Process Cyan, raster 390l/cm,", "Z-93")),
+    ({"position_label": "VIII", "klise_code": "uređaj za lakiranje", "color_text": "UV lak",
+      "raster": "160 l/cm", "cylinder": "Z-88"},
+     ("VIII uređaj za lakiranje, UV lak, raster 160l/cm,", "Z-88")),
+    ({"position_label": "V", "klise_code": "DEMO-01", "variant": "P", "color_text": "boja Pantone 286 C",
+      "raster": "400", "cylinder": "Z-93", "note": "novi kliše", "supplier": "Primer"},
+     ("V kliše oznake DEMO-01, P, boja Pantone 286 C, raster 400l/cm,", "Z-93, novi kliše")),
+    ({"position_label": "II", "klise_code": "0000", "variant": "", "color_text": "Process Magenta"},
+     ("II kliše oznake 0000, boja Process Magenta,", "")),
+])
+def test_colour_row_text(row, parts):
+    assert boja_text(row) == parts
+

@@ -29,10 +29,11 @@ the product and die catalogues.
   production-run dates per product, builds the order's text lines word for
   word (which letter of the name is printed first, the ALATI line, OPIS,
   NAPOMENA with the split into rolls and each roll's counter length, the
-  order's date and the line to sign on), and searches past orders, newest
-  first, by text or by the order's date (a day such as 18.07.2025 or a
-  month such as 07.2025), to open the Word file or reuse it for a repeat
-  job.
+  order's date and the line to sign on), writes the order as a Word file
+  laid out like the shop's template ("Word nalog": into the orders folder,
+  where the watcher files it), and searches past orders, newest first, by
+  text or by the order's date (a day such as 18.07.2025 or a month such as
+  07.2025), to open the Word file or reuse it for a repeat job.
   The lines it writes can be edited by hand; an edited line stays as typed
   until its "Auto" button puts the automatic text back. Saving keeps every
   field with the order, so an order can be reopened exactly as it was
@@ -98,6 +99,8 @@ server/
   requirements.txt          API and watcher dependencies (Docker image)
 client/
   gui_production_order.py   production-order form, the main desktop app
+  order_text.py             the order's text lines, word for word
+  order_docx.py             the order as a Word file, laid out like the template
   formatting.py             Serbian number formats, cylinder notation
   gui_main.py               early prototype: 90×60 mm label preview and print
 import_tools_from_excel.py  loads the die catalogue from Excel

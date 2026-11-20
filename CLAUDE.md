@@ -14,8 +14,9 @@ bottom in the template's order:
 
 - done: the whole template, top to bottom, down to the date and signature;
   the die search has one field per column; every field is saved with the
-  order and the order can be reopened
-- **next: generate the .docx from the form, in the template's layout**
+  order and the order can be reopened; "Word nalog" writes the order's Word
+  file in the template's layout, and the watcher files and reads it
+- next: the owner's open questions below
 
 Open questions for the owner:
 - colour-row exceptions the owner wants as presets in ŠIFRA BOJA: ZLATOTISAK
@@ -27,9 +28,6 @@ Open questions for the owner:
 - "New number" keeps the fields that are in the form, also after an order
   was reopened, so the new order starts as a copy. Should it offer an empty
   form instead?
-
-For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
-(`rows_wide`); the form does not write that yet.
 
 ## Decisions already made
 
@@ -80,6 +78,25 @@ For the .docx step: the KOLIČINA line ends with the lanes, `- 3 reda`
   order is signed by hand, no name is printed. `datum_potpis_lines()` keeps
   the template's spacing of the three bottom lines for the .docx. A form
   saved before the date existed reopens with today's.
+- "Word nalog" saves the order, writes its Word file (`client/order_docx.py`,
+  python-docx) into the orders folder (`DOCS_DIR`) and opens it. The file
+  goes where the order already has one: its `rel_path` (finalize returns
+  it), else a file of the watcher's naming (`6276 - ….docx`) anywhere in the
+  folder, else today's `YYYY/MM/DD` folder; an existing file is replaced
+  only after asking. One file per order: the watcher takes a second file
+  with the same number for a new order and renumbers it. The file appears
+  whole (written under a temporary name, then renamed); the watcher sees an
+  order with no file yet, keeps the file where it is and reads it.
+- The Word file follows the template: Letter page, margins 10/5/5/3 mm,
+  Arial 12 pt bold, labels padded with the template's own space counts
+  (`_LABEL_PAD`), colour rows padded so the cylinder starts 478 pt in, as in
+  the template (Arial Bold widths in `_ARIAL_BOLD`), and the template's
+  sizes and italics per run (`order_lines()`). Each line typed in a text box
+  is its own paragraph. NAZIV prints the kind of label ("nalepnica") plain
+  bold and the rest bold italic 14 pt (the template's own NAZIV mixes
+  sizes). The template's line before "Datum" is an old text in white; the
+  file has an empty line there. The form's KOLIČINA line is the printed one
+  (`kolicina_parts()`, with the lanes and the note).
 - The form saves text lines in `doc_params` (keys `stampa`, `napred_slovo`,
   `napred_naziv`, `alati`, `opis`, `napomena`, and the order's date as ISO in
   `datum_doc`; the watcher uses `alati`, `opis`, `napomena` and `datum_doc`
@@ -165,6 +182,7 @@ quantity, ask the owner which is right before changing a formula.
   drive the form headless (QT_QPA_PLATFORM=offscreen) against a test stack
   (Postgres 16 + the API) and look at a screenshot.
 - After a server change, the running stack needs `docker compose restart api
-  watcher` (the code is mounted, not baked in); requirements changes need
-  `docker compose up -d --build`. A changed schema file is applied again
+  watcher` (the code is mounted, not baked in); `server/requirements.txt`
+  changes need `docker compose up -d --build`, and the host's
+  `requirements.txt` changes `pip install -r requirements.txt` in the `.venv`. A changed schema file is applied again
   with the README's psql command (the schema files are safe to re-run).

@@ -95,7 +95,7 @@ def finalize_document(payload: FinalizeDoc):
                   rok_isporuke          = :rok_isporuke,
                   status                = 'final'
                 WHERE doc_number = :doc_number
-                RETURNING doc_number
+                RETURNING doc_number, rel_path
             """),
             params,
         ).mappings().fetchone()
@@ -116,7 +116,7 @@ def finalize_document(payload: FinalizeDoc):
                       :stancna_mm, :rows_long, :rows_wide, :kolicina_note, :rok_isporuke,
                       'final'
                     )
-                    RETURNING doc_number
+                    RETURNING doc_number, rel_path
                 """),
                 params,
             ).mappings().fetchone()
@@ -137,7 +137,8 @@ def finalize_document(payload: FinalizeDoc):
             _set_param(cx, payload.doc_number, _FORM_STATE,
                        json.dumps(form_state, ensure_ascii=False))
 
-    return {"ok": True, "doc_number": row["doc_number"]}
+    # rel_path: the order's Word file in the orders folder, once the watcher has it
+    return {"ok": True, "doc_number": row["doc_number"], "rel_path": row["rel_path"]}
 
 
 @router.get("/documents/form/{doc_number}")
