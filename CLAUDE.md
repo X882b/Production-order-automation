@@ -17,16 +17,13 @@ bottom in the template's order:
   order and the order can be reopened; "Word nalog" writes the order's Word
   file in the template's layout, and the watcher files and reads it; "New
   number" starts an empty order and "Nova verzija" makes 12345-1, 12345-2
-- next: the owner's open questions below
+- next: nothing open; the colour-row presets below when the owner gives the
+  texts
 
-Open questions for the owner:
-- NAPOMENA: the leftover pieces are rounded up to 5 per roll (seen in one
-  order only): 100.000 kom, 1.000 kom/rolna, 3 lanes gives 99 rolls of 1.000
-  and 3 rolls of 335 (333,33 rounded up to 5). Is 5 the rule, or 334?
-- later, when the owner gives the texts: colour-row presets in ŠIFRA BOJA.
-  ZLATOTISAK is known (`folija zlatna, lepakzafoliju UVH0-0007+“zlatna“
-  folija KFA 100 Gloss Gold,ras. 140l/cm,` on its own station, e.g. VII);
-  SREBRNA and BELA will come later
+Later, when the owner gives the texts:
+- colour-row presets in ŠIFRA BOJA: ZLATOTISAK is known (`folija zlatna,
+  lepakzafoliju UVH0-0007+“zlatna“ folija KFA 100 Gloss Gold,ras. 140l/cm,`
+  on its own station, e.g. VII); SREBRNA and BELA will come later
 
 ## Decisions already made
 
@@ -39,6 +36,10 @@ Open questions for the owner:
   into rolls; the labels around drive otkucaja/rolna. Orders saved before
   this was fixed have the two swapped in `documents.rows_long`/`rows_wide`;
   nothing reads those columns yet.
+- The last rolls take what is left after the full rolls, spread over the
+  lanes and rounded up to a number ending in 0 or 5 (`split_rolls()`):
+  100.000 kom, 1.000 kom/rolna, 3 lanes gives 99 rolni x 1.000 + 3 rolne x
+  335 (333,33 rounded up). Confirmed by the owner.
 - otkucaja/rolna = kom/rolna × die circumference ÷ labels around ÷ 100 (the
   roll's length in tenths of a metre). Checked against the owner's real
   orders (Z-93, 2 around: 1.000 kom → 1476; Z-81, 4 around: 1.225 kom → 788).

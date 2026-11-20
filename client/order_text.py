@@ -268,7 +268,8 @@ def otkucaji(kom_po_rolni, stancna_mm, rows_long) -> int | None:
 
 def split_rolls(total_kom, kom_po_rolni, lanes) -> list[tuple[int, int]]:
     """Proposed (rolls, kom/rolna) groups: full rolls in whole sets of lanes,
-    then the rest spread over the lanes, rounded up to 5 kom.
+    then the rest spread over the lanes, rounded up to a number ending in 0
+    or 5 (the shop's rule).
 
     100.000 kom, 1.000 kom/rolna, 3 lanes -> [(99, 1000), (3, 335)]
     """

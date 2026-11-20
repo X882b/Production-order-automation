@@ -195,6 +195,8 @@ def test_otkucaji(kom, stancna, rows_long, expected):
 
 @pytest.mark.parametrize("total, per_roll, lanes, expected", [
     (100_000, 1000, 3, [(99, 1000), (3, 335)]),   # 1.000 left over 3 lanes -> 334 -> 335
+    (100_008, 1000, 3, [(99, 1000), (3, 340)]),   # 336 -> 340: up to a number ending in 0 or 5
+    (100_200, 1000, 3, [(99, 1000), (3, 400)]),   # 400 is one already
     (99_000, 1000, 3, [(99, 1000)]),              # whole sets only
     (100_000, 1000, 1, [(100, 1000)]),
     (100_000, 1000, None, [(100, 1000)]),         # lanes unknown: one lane
